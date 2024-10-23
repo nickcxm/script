@@ -3,7 +3,7 @@
 # 安装 Zsh
 sudo apt update
 sudo apt install -y zsh
-
+sudo apt install -y git
 # 将 Zsh 设置为默认 Shell
 chsh -s $(which zsh)
 
