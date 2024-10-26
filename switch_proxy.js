@@ -2,7 +2,7 @@ var d = new Date();
 var h = d.getHours();
 
 const nightChoice = ["dmit49"];
-const dayChoice = ["dmit49"];
+const dayChoice = ["jp-iij"];
 
 var nodeList;
 console.log("切换开始");
