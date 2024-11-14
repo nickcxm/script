@@ -11,7 +11,7 @@ USER = "s01"
 
 
 PASSWORD = "USER_DEFAULT_PASSWORD"
-PORT = 60601
+PORT = 35601
 CU = "cu.tz.cloudcpp.com"
 CT = "ct.tz.cloudcpp.com"
 CM = "cm.tz.cloudcpp.com"
