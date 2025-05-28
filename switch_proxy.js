@@ -1,7 +1,7 @@
 var d = new Date();
 var h = d.getHours();
 
-const nightChoice = ["dmit49"];
+const nightChoice = ["dmit39"];
 const dayChoice = ["jp-iij"];
 
 var nodeList;
