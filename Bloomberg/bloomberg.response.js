@@ -1,5 +1,5 @@
 /*
- * Bloomberg paragraph translation for Surge, 2026-10-09.
+ * Bloomberg Google-only body translation for Surge — 20261009-google-2.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to Google's unauthenticated translation endpoint.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,6 +7,8 @@
 (() => {
   'use strict';
 
+  const VERSION = '20261009-google-2';
+  const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
   const LEGACY_PREFIX = '【中文译文】';
@@ -119,6 +121,8 @@
         !Array.isArray(story.components) || story.components.length > MAX_COMPONENTS) {
       throw new Error('Unsupported story response');
     }
+    const before = JSON.stringify(story);
+    story = { ...story, components: story.components.filter(item => !item?.[INFO_MARKER]) };
     const started = clock();
     const deadline = started + TOTAL_TIMEOUT_MS;
     const jobs = [];
@@ -209,8 +213,13 @@
       if (after.has(index)) {
         const group = after.get(index);
         components.push({ role: 'p', [TRANSLATION_MARKER]: true, [SOURCE_COUNT]: group.count,
-          parts: [{ role: 'text', text: group.job.translation }] });
+          parts: [{ role: 'text', text: group.job.translation + '\n\n（翻译：谷歌）' }] });
       }
+    }
+    if (failed || expired) {
+      const firstParagraph = components.findIndex(item => item?.role === 'p' && !isTranslation(item));
+      if (firstParagraph !== -1) components.splice(firstParagraph + 1, 0, { role: 'p', [INFO_MARKER]: 'notice',
+        parts: [{ role: 'text', text: '翻译提示：部分 Google 翻译失败或超时，未成功的正文分组保留英文，请稍后重试。' }] });
     }
     let adConfigChanged = false;
     const result = { ...story, components };
@@ -220,10 +229,10 @@
     }
     // In the provided HAR, webview is related reading, not an advertisement.
     // Images, webviews, article metadata and all unrecognized roles are retained.
-    return { story: result, changed: after.size > 0 || adConfigChanged || labelsRemoved > 0,
+    return { story: result, changed: JSON.stringify(result) !== before,
       stats: { paragraphs: jobs.reduce((sum, item) => sum + item.count, 0), groups: jobs.length,
         translated: successful.reduce((sum, item) => sum + item.count, 0), translatedGroups: after.size,
-        requests, failed, expired, adConfigChanged, labelsRemoved } };
+        requests, failed, expired, adConfigChanged, labelsRemoved, provider: 'google', version: VERSION } };
   }
 
   function responseHeaders(headers) {
@@ -259,7 +268,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { VERSION, INFO_MARKER, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();

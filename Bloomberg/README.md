@@ -1,4 +1,4 @@
-# Bloomberg 文章中英对照 — Surge 实验模块
+# Bloomberg 文章中英对照 — 仅 Google 翻译
 
 根据用户提供的真实 HAR 中的文章详情 JSON 编写。只处理：
 
@@ -20,6 +20,8 @@ https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Transl
 
 若其他响应脚本也匹配同一接口，需要关闭或调整它们：Surge 每个响应只运行第一个匹配的响应脚本。
 
+模块仅使用 Google，不提供 AI URL、Token 或模型设置。未发布的 AI 实验没有合入此版本。
+
 模块的 `script-path` 固定到已验证的 Git 提交，更新版本时同时更换该地址，以区分旧的远程脚本缓存。仅更新 `main` 分支内容不保证 Surge 立即使用新脚本。
 
 如果仍看到旧版“中文译文”标签，先移除旧的 Bloomberg 翻译模块，再从本仓库重新添加，确保没有另一份旧模块抢先匹配。随后完全退出 App 并打开一篇未缓存的文章。
@@ -38,7 +40,7 @@ https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Transl
   "_nickcxmTranslation": true,
   "_nickcxmSourceParagraphs": 2,
   "parts": [
-    { "role": "text", "text": "这里是前面两个英文段落合并后的中文翻译。" }
+    { "role": "text", "text": "这里是前面两个英文段落合并后的中文翻译。\n\n（翻译：谷歌）" }
   ]
 }
 ```
@@ -47,7 +49,7 @@ https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Transl
 
 标题、摘要、作者、图片说明、嵌入 HTML、链接 URL、行情和证券元数据均不翻译。图片、相关阅读和未知组件保留。
 
-译文直接显示中文，不附加“中文译文”文字。新增段落使用 `_nickcxmTranslation` 标记和 `_nickcxmSourceParagraphs` 原文段落数量避免重复追加；这些字段属于元数据，不加入正文文字；旧版本带标签的译文也可识别并去掉标签。相同正文分组在同一次请求内只翻译一次。旧版逐段译文仍可识别。
+译文不附加“中文译文”标签；每个合并后的中文块末尾标注“（翻译：谷歌）”。新增段落使用 `_nickcxmTranslation` 标记和 `_nickcxmSourceParagraphs` 原文段落数量避免重复追加；这些字段属于元数据，不加入正文文字；旧版本带标签的译文也可识别并去掉标签。相同正文分组在同一次请求内只翻译一次。旧版逐段译文仍可识别。
 
 ## 参数
 
@@ -78,7 +80,7 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt
 
 ## 超时和兼容性
 
-最多同时翻译 3 个正文分组；长分组拆为最多 1200 Unicode 字符的片段，每次处理最多 48 个翻译请求。全局翻译预算 45 秒，单次请求最多 7 秒，模块脚本超时 60 秒。后续超出预算或失败的分组保留英文。分组中任一片段失败时，整组不追加残缺译文。
+最多同时翻译 3 个正文分组；长分组拆为最多 1200 Unicode 字符的片段，每次处理最多 48 个翻译请求。全局翻译预算 45 秒，单次请求最多 7 秒，模块脚本超时 60 秒。后续超出预算或失败的分组保留英文，并在第一个正文段落后添加失败提示。提示不会被当作正文参与重试翻译。分组中任一片段失败时，整组不追加残缺译文。
 
 翻译会延迟文章响应交付；没有跨请求缓存，每次真正获取文章都可能再次翻译。当前机制无法在 App 已显示原文后后台插入译文，第一次显示必须等待翻译完成。
 
@@ -92,7 +94,7 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt
 
 2026-10-09：
 
-- 26 项自动测试通过：原结构保留、相邻正文合并、图片及其他组件边界、分组幂等、旧标签迁移、嵌套链接去重、段落追加、幂等、局部失败、并发/请求数量限制、超时、限流、请求隔离以及模块参数和正则。
+- 29 项自动测试通过：原结构保留、相邻正文合并、图片及其他组件边界、分组幂等、旧标签迁移、嵌套链接去重、段落追加、幂等、局部失败、并发/请求数量限制、超时、限流、请求隔离以及模块参数和正则。
 - 使用 HAR 的响应 JSON，在 Node VM 中运行完整 Surge 脚本，并将 `$httpClient` 适配为真实 HTTPS 请求。
 - 旧版逐段真实 Google 测试：20/20 段翻译成功，20 次请求，耗时约 4.9 秒。
 - 新版将同一样本的 20 段正文分为 4 组（8/4/5/3 段），由相关阅读和图片分隔；原有 23 个组件保持不动。新版真实 Google 测试全部成功，请求从 20 次降至 6 次，本次耗时约 1.8 秒；组件由 23 个变为 27 个，原有组件深度比较一致。两次测量并非受控性能基准，手机实际速度受网络与 Google 服务影响。

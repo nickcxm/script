@@ -6,6 +6,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 const api = require('../bloomberg.response.js');
 const source = fs.readFileSync(path.join(__dirname, '../bloomberg.response.js'), 'utf8');
+function bodyComponents(story) { return story.components.filter(item => !item?.[api.INFO_MARKER]); }
+function translatedText(component) { return component.parts[0].text.replace(/\n\n（翻译：谷歌）$/, ''); }
 const REQUEST_URL = 'https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/TMM9Y6T3BZM200?updatedAt=test&contentCliff=false';
 function paragraph(text) { return { role: 'p', parts: [{ role: 'text', text }] }; }
 function fixture() {
@@ -60,7 +62,7 @@ test('adjacent paragraphs translate as one group; originals, links and other com
   assert.deepEqual(sent, ['The company postponed its IPO.\n\nRead more here.']);
   assert.deepEqual(output.story.components[0], original.components[0]);
   assert.deepEqual(output.story.components[1], original.components[1]);
-  assert.equal(output.story.components[2].parts[0].text, '译文：The company postponed its IPO.\n\nRead more here.');
+  assert.equal(translatedText(output.story.components[2]), '译文：The company postponed its IPO.\n\nRead more here.');
   assert.equal(output.story.components[2][api.SOURCE_COUNT], 2);
   assert.deepEqual(output.story.components.slice(3), original.components.slice(2));
   assert.deepEqual(output.story.aiSummary, original.aiSummary);
@@ -77,14 +79,14 @@ test('translation failure is isolated to a group separated by an image', async (
   story.components.splice(1, 0, { role: 'image', caption: 'separator' });
   const output = await api.translateStory(story, async text => { if (text.startsWith('The')) throw Error('failure'); return '了解更多。'; });
   assert.equal(output.stats.translated, 1); assert.equal(output.stats.failed, 1);
-  assert.deepEqual(output.story.components[0], story.components[0]);
-  assert.deepEqual(output.story.components[1], story.components[1]);
-  assert.deepEqual(output.story.components[2], story.components[2]);
-  assert.equal(output.story.components[3].parts[0].text, '了解更多。');
+  assert.deepEqual(bodyComponents(output.story)[0], story.components[0]);
+  assert.deepEqual(bodyComponents(output.story)[1], story.components[1]);
+  assert.deepEqual(bodyComponents(output.story)[2], story.components[2]);
+  assert.equal(translatedText(bodyComponents(output.story)[3]), '了解更多。');
 });
 test('empty translations do not replace or append paragraph text', async () => {
   const story = fixture(); const result = await api.translateStory(story, async () => '  ', { removeAdConfig: false });
-  assert.equal(result.changed, false); assert.deepEqual(result.story.components, story.components);
+  assert.equal(result.changed, true); assert.deepEqual(bodyComponents(result.story), story.components);
 });
 test('ad configuration removal is limited and switchable', async () => {
   const story = fixture();
@@ -107,7 +109,7 @@ test('long paragraphs split without losing text or Unicode; partial failures app
   assert.ok(api.splitText(text).every(part => Array.from(part).length <= 1200));
   let count = 0;
   const result = await api.translateStory({ components: [paragraph(text)] }, async () => { if (++count === 2) throw Error('partial'); return '译文'; });
-  assert.equal(result.changed, false); assert.equal(result.story.components.length, 1);
+  assert.equal(result.changed, true); assert.equal(bodyComponents(result.story).length, 1);
 });
 test('concurrency is bounded to three requests', async () => {
   let active = 0, peak = 0;
@@ -150,7 +152,9 @@ test('Google transport sends only source text, no incoming credentials and no re
 test('network failure and rate limit preserve all original paragraphs', async () => {
   for (const get of [(_, cb) => cb('failure', null, null), (_, cb) => cb(null, { status: 429 }, '{}'), (_, cb) => cb(null, { status: 200 }, '<html>blocked</html>')]) {
     const { result } = await execute({ argument: '{"removeAdConfig":false}', get });
-    assert.equal(Object.keys(result).length, 0);
+    const output = JSON.parse(result.body);
+    assert.deepEqual(bodyComponents(output), fixture().components);
+    assert.equal(output.components[1][api.INFO_MARKER], 'notice');
   }
 });
 test('timeout rejects and late callbacks are ignored', async () => {
@@ -208,7 +212,7 @@ test('split plain-text parts are merged into exactly one paragraph translation r
   const result = await api.translateStory({ components: [original] }, async text => { sent.push(text); return '完整段落译文。'; });
   assert.deepEqual(sent, ['The listing of Firmus Grid Ltd. was poised to be the next beat of Oliver Curtis’s comeback story.']);
   assert.equal(result.story.components.length, 2); assert.deepEqual(result.story.components[0], original);
-  assert.equal(result.story.components[1].parts[0].text, '完整段落译文。');
+  assert.equal(translatedText(result.story.components[1]), '完整段落译文。');
   assert.equal(result.story.components[1][api.TRANSLATION_MARKER], true);
 });
 
@@ -236,7 +240,7 @@ test('an unsuccessful chunk leaves the entire grouped original intact', async ()
   const original = { components: [paragraph('First long paragraph. '.repeat(60)), paragraph('Second long paragraph. '.repeat(60))] };
   let calls = 0;
   const output = await api.translateStory(original, async () => { if (++calls === 2) throw Error('failure'); return '部分译文。'; });
-  assert.deepEqual(output.story.components, original.components); assert.equal(output.changed, false);
+  assert.deepEqual(bodyComponents(output.story), original.components); assert.equal(output.changed, true);
 });
 
 test('grouped translations are idempotent, including repeated source paragraphs', async () => {
@@ -256,4 +260,29 @@ test('legacy individual translations do not cause earlier groups to be skipped',
   const result = await api.translateStory(original, async text => { sent.push(text); return '新译文。'; });
   assert.deepEqual(sent.sort(), ['New text.', 'Other new text.'].sort());
   assert.equal(result.stats.translated, 2);
+});
+
+
+test('every translated block ends with the Google provider label', async () => {
+  const original = { components: [paragraph('First block.'), { role: 'image' }, paragraph('Second block.')] };
+  const result = await api.translateStory(original, async () => '中文正文。');
+  const translations = result.story.components.filter(item => item[api.TRANSLATION_MARKER]);
+  assert.equal(translations.length, 2);
+  for (const component of translations) assert.equal(component.parts[0].text, '中文正文。\n\n（翻译：谷歌）');
+  assert.equal(result.stats.provider, 'google');
+});
+test('failure notices do not become translated body text on retry', async () => {
+  const original = { components: [paragraph('First block.'), { role: 'image' }, paragraph('Second block.')] };
+  const first = await api.translateStory(original, async () => { throw Error('failed'); });
+  assert.equal(first.story.components[1][api.INFO_MARKER], 'notice');
+  const sent = [];
+  const second = await api.translateStory(first.story, async text => { sent.push(text); return '重试成功。'; });
+  assert.deepEqual(sent.sort(), ['First block.', 'Second block.'].sort());
+  assert.equal(second.story.components.some(item => item[api.INFO_MARKER]), false);
+});
+test('module has no AI settings and runtime requests only Google', async () => {
+  const moduleText = fs.readFileSync(path.join(__dirname, '../Bloomberg.Translate.sgmodule'), 'utf8');
+  assert.equal(/AI地址|AIToken|AI模型|智谱密钥/.test(moduleText), false);
+  const { requests } = await execute();
+  assert.ok(requests.length > 0); assert.ok(requests.every(item => item.url.startsWith('https://translate.googleapis.com/translate_a/single?')));
 });
