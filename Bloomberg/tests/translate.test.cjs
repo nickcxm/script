@@ -179,6 +179,7 @@ test('malformed paragraph is retained while other paragraphs translate', async (
 test('module scope and parameter rendering match runtime behavior', () => {
   const module = fs.readFileSync(path.join(__dirname, '../Bloomberg.Translate.sgmodule'), 'utf8');
   const line = module.split('\n').find(line => line.startsWith('nickcxm.'));
+  assert.match(line, /script-path=https:\/\/raw\.githubusercontent\.com\/nickcxm\/script\/[a-f0-9]{40}\/Bloomberg\/bloomberg\.response\.js/);
   const regex = new RegExp(line.match(/pattern=(.*?), requires-body/)[1]);
   assert.ok(regex.test(REQUEST_URL)); assert.ok(regex.test(REQUEST_URL.split('?')[0]));
   assert.equal(regex.test('https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/find'), false);
