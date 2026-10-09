@@ -11,6 +11,7 @@
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
   const LEGACY_PREFIX = '【中文译文】';
   const TRANSLATION_MARKER = '_nickcxmTranslation';
+  const SOURCE_COUNT = '_nickcxmSourceParagraphs';
   const MAX_BODY = 1024 * 1024;
   const MAX_COMPONENTS = 500;
   const MAX_REQUESTS = 48;
@@ -122,29 +123,58 @@
     const deadline = started + TOTAL_TIMEOUT_MS;
     const jobs = [];
     const unique = new Map();
-    let malformed = 0;
-    let requestCount = 0;
+    const covered = new Set();
+    // A grouped translation covers N consecutive source paragraphs before it.
+    // Older paragraph-by-paragraph translations have no count and cover one.
     for (let index = 0; index < story.components.length; index++) {
       const component = story.components[index];
-      if (component?.role !== 'p' || isTranslation(component) || isTranslation(story.components[index + 1])) continue;
-      let source;
-      try { source = extractText(component.parts).trim(); }
-      catch (_) { malformed++; continue; }
-      if (!source || !/[A-Za-z]/.test(source) || /^[\s\d\p{P}\p{S}]+$/u.test(source)) continue;
+      if (!isTranslation(component)) continue;
+      const count = Number.isInteger(component[SOURCE_COUNT]) && component[SOURCE_COUNT] > 0 &&
+        component[SOURCE_COUNT] <= MAX_COMPONENTS ? component[SOURCE_COUNT] : 1;
+      for (let offset = 1; offset <= count; offset++) {
+        const previous = story.components[index - offset];
+        if (previous?.role !== 'p' || isTranslation(previous)) break;
+        covered.add(index - offset);
+      }
+    }
+    let malformed = 0;
+    let requestCount = 0;
+    let group = null;
+    function flushGroup() {
+      if (!group) return;
+      const source = group.texts.join('\n\n');
       let job = unique.get(source);
       if (!job) {
         const chunks = splitText(source);
-        if (requestCount + chunks.length > MAX_REQUESTS) continue;
+        if (requestCount + chunks.length > MAX_REQUESTS) { group = null; return; }
         requestCount += chunks.length;
         job = { source, chunks, translation: null };
         unique.set(source, job);
       }
-      jobs.push({ index, job });
+      jobs.push({ index: group.end, count: group.texts.length, job });
+      group = null;
     }
+    for (let index = 0; index < story.components.length; index++) {
+      const component = story.components[index];
+      // Every non-body component (especially images and webviews) separates
+      // runs. Never merge across a skipped/malformed/already translated item.
+      if (component?.role !== 'p' || isTranslation(component) || covered.has(index)) {
+        flushGroup(); continue;
+      }
+      let source;
+      try { source = extractText(component.parts).trim(); }
+      catch (_) { malformed++; flushGroup(); continue; }
+      if (!source || !/[A-Za-z]/.test(source)) { flushGroup(); continue; }
+      if (!group) group = { texts: [], end: index };
+      group.texts.push(source);
+      group.end = index;
+    }
+    flushGroup();
     const pending = Array.from(unique.values());
     let next = 0;
     let failed = malformed;
     let expired = 0;
+    let requests = 0;
     async function worker() {
       while (next < pending.length) {
         const job = pending[next++];
@@ -154,6 +184,7 @@
           for (const chunk of job.chunks) {
             const remaining = deadline - clock();
             if (remaining <= 0) throw new Error('Translation deadline');
+            requests++;
             const value = await translate(chunk, Math.min(REQUEST_TIMEOUT_MS, remaining));
             if (typeof value !== 'string' || !value.trim()) throw new Error('Empty translation');
             translated.push(value.trim());
@@ -163,7 +194,8 @@
       }
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
-    const after = new Map(jobs.filter(item => item.job.translation).map(item => [item.index, item.job.translation]));
+    const successful = jobs.filter(item => item.job.translation);
+    const after = new Map(successful.map(item => [item.index, item]));
     const components = [];
     let labelsRemoved = 0;
     for (let index = 0; index < story.components.length; index++) {
@@ -174,8 +206,11 @@
           text: original.parts[0].text.slice(LEGACY_PREFIX.length).replace(/^\s*\n?/, '') }] });
         labelsRemoved++;
       } else components.push(original);
-      if (after.has(index)) components.push({ role: 'p', [TRANSLATION_MARKER]: true,
-        parts: [{ role: 'text', text: after.get(index) }] });
+      if (after.has(index)) {
+        const group = after.get(index);
+        components.push({ role: 'p', [TRANSLATION_MARKER]: true, [SOURCE_COUNT]: group.count,
+          parts: [{ role: 'text', text: group.job.translation }] });
+      }
     }
     let adConfigChanged = false;
     const result = { ...story, components };
@@ -186,7 +221,9 @@
     // In the provided HAR, webview is related reading, not an advertisement.
     // Images, webviews, article metadata and all unrecognized roles are retained.
     return { story: result, changed: after.size > 0 || adConfigChanged || labelsRemoved > 0,
-      stats: { paragraphs: jobs.length, translated: after.size, failed, expired, adConfigChanged, labelsRemoved } };
+      stats: { paragraphs: jobs.reduce((sum, item) => sum + item.count, 0), groups: jobs.length,
+        translated: successful.reduce((sum, item) => sum + item.count, 0), translatedGroups: after.size,
+        requests, failed, expired, adConfigChanged, labelsRemoved } };
   }
 
   function responseHeaders(headers) {
@@ -222,7 +259,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();

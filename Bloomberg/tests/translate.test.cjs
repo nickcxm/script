@@ -53,15 +53,16 @@ test('malformed and excessively nested paragraph trees are rejected', () => {
   for (let i = 0; i < 25; i++) parts = [{ role: 'anchor', parts }];
   assert.throws(() => api.extractText(parts));
 });
-test('translation is appended per paragraph; originals, links and other components are unchanged', async () => {
+test('adjacent paragraphs translate as one group; originals, links and other components are unchanged', async () => {
   const original = fixture(), snapshot = JSON.stringify(original), sent = [];
   const output = await api.translateStory(original, async text => { sent.push(text); return '译文：' + text; });
   assert.equal(JSON.stringify(original), snapshot);
-  assert.deepEqual(sent.sort(), ['Read more here.', 'The company postponed its IPO.'].sort());
+  assert.deepEqual(sent, ['The company postponed its IPO.\n\nRead more here.']);
   assert.deepEqual(output.story.components[0], original.components[0]);
-  assert.deepEqual(output.story.components[2], original.components[1]);
-  assert.equal(output.story.components[1].parts[0].text, '译文：The company postponed its IPO.');
-  assert.deepEqual(output.story.components.slice(4), original.components.slice(2));
+  assert.deepEqual(output.story.components[1], original.components[1]);
+  assert.equal(output.story.components[2].parts[0].text, '译文：The company postponed its IPO.\n\nRead more here.');
+  assert.equal(output.story.components[2][api.SOURCE_COUNT], 2);
+  assert.deepEqual(output.story.components.slice(3), original.components.slice(2));
   assert.deepEqual(output.story.aiSummary, original.aiSummary);
   assert.equal(output.story.title, original.title); assert.equal(output.story.premium, true); assert.equal(output.story.isMetered, true);
 });
@@ -71,13 +72,15 @@ test('existing translations are not duplicated or re-sent', async () => {
   const second = await api.translateStory(first.story, async () => { count++; return '中文译文'; });
   assert.equal(count, 0); assert.equal(second.changed, false); assert.deepEqual(second.story, first.story);
 });
-test('translation failure is isolated to its paragraph', async () => {
+test('translation failure is isolated to a group separated by an image', async () => {
   const story = fixture();
+  story.components.splice(1, 0, { role: 'image', caption: 'separator' });
   const output = await api.translateStory(story, async text => { if (text.startsWith('The')) throw Error('failure'); return '了解更多。'; });
   assert.equal(output.stats.translated, 1); assert.equal(output.stats.failed, 1);
   assert.deepEqual(output.story.components[0], story.components[0]);
   assert.deepEqual(output.story.components[1], story.components[1]);
-  assert.equal(output.story.components[2].parts[0].text, '了解更多。');
+  assert.deepEqual(output.story.components[2], story.components[2]);
+  assert.equal(output.story.components[3].parts[0].text, '了解更多。');
 });
 test('empty translations do not replace or append paragraph text', async () => {
   const story = fixture(); const result = await api.translateStory(story, async () => '  ', { removeAdConfig: false });
@@ -108,21 +111,21 @@ test('long paragraphs split without losing text or Unicode; partial failures app
 });
 test('concurrency is bounded to three requests', async () => {
   let active = 0, peak = 0;
-  await api.translateStory({ components: Array.from({ length: 10 }, (_, i) => paragraph('Paragraph ' + i)) }, async () => {
+  await api.translateStory({ components: Array.from({ length: 10 }, (_, i) => [paragraph('Paragraph ' + i), { role: 'image' }]).flat() }, async () => {
     active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 2)); active--; return '中文译文';
   });
   assert.equal(peak, 3);
 });
 test('total deadline stops queued work', async () => {
   let now = 0, called = 0;
-  const result = await api.translateStory({ components: Array.from({ length: 10 }, (_, i) => paragraph('Paragraph ' + i)) }, async () => {
+  const result = await api.translateStory({ components: Array.from({ length: 10 }, (_, i) => [paragraph('Paragraph ' + i), { role: 'image' }]).flat() }, async () => {
     called++; now += api.TOTAL_TIMEOUT_MS; return '中文译文';
   }, { removeAdConfig: false }, () => now);
   assert.equal(called, 1); assert.equal(result.stats.translated, 1); assert.equal(result.stats.expired, 9);
 });
 test('translation request count cannot exceed Surge timer limits', async () => {
   let calls = 0;
-  await api.translateStory({ components: Array.from({ length: 100 }, (_, i) => paragraph('Paragraph ' + i)) }, async () => { calls++; return '译文'; });
+  await api.translateStory({ components: Array.from({ length: 100 }, (_, i) => [paragraph('Paragraph ' + i), { role: 'image' }]).flat() }, async () => { calls++; return '译文'; });
   assert.equal(calls, 48);
 });
 test('Google parser concatenates sentences and rejects rate-limit/non-JSON/non-Chinese data', () => {
@@ -131,7 +134,7 @@ test('Google parser concatenates sentences and rejects rate-limit/non-JSON/non-C
 });
 test('Google transport sends only source text, no incoming credentials and no redirects/cookies', async () => {
   const { result, requests, logs } = await execute({ argument: '{"debug":true}' });
-  assert.ok(result.body); assert.equal(requests.length, 2);
+  assert.ok(result.body); assert.equal(requests.length, 1);
   for (const request of requests) {
     const target = new URL(request.url); assert.equal(target.origin, 'https://translate.googleapis.com');
     assert.equal(target.pathname, '/translate_a/single'); assert.equal(target.searchParams.get('tl'), 'zh-CN');
@@ -206,4 +209,50 @@ test('split plain-text parts are merged into exactly one paragraph translation r
   assert.equal(result.story.components.length, 2); assert.deepEqual(result.story.components[0], original);
   assert.equal(result.story.components[1].parts[0].text, '完整段落译文。');
   assert.equal(result.story.components[1][api.TRANSLATION_MARKER], true);
+});
+
+
+test('images and all non-body components split groups and remain untranslated', async () => {
+  const separators = [{ role: 'image', caption: 'Do not translate caption' },
+    { role: 'webview', html: '<p>Do not translate embedded HTML</p>' },
+    { role: 'heading', text: 'Do not translate heading' }, { role: 'unknown', text: 'Do not translate unknown' }];
+  const components = [];
+  for (let i = 0; i < separators.length; i++) components.push(paragraph('Body A ' + i), paragraph('Body B ' + i), separators[i]);
+  const original = { title: 'Do not translate title', summary: 'Do not translate summary', aiSummary: ['Do not translate AI summary'], components };
+  const sent = [];
+  const output = await api.translateStory(original, async text => { sent.push(text); return '正文合并译文。'; });
+  assert.deepEqual(sent.sort(), separators.map((_, i) => 'Body A ' + i + '\n\nBody B ' + i).sort());
+  assert.equal(output.stats.paragraphs, 8); assert.equal(output.stats.groups, 4); assert.equal(output.stats.requests, 4);
+  for (let i = 0; i < separators.length; i++) {
+    assert.deepEqual(output.story.components[i * 4], components[i * 3]);
+    assert.deepEqual(output.story.components[i * 4 + 1], components[i * 3 + 1]);
+    assert.equal(output.story.components[i * 4 + 2][api.SOURCE_COUNT], 2);
+    assert.deepEqual(output.story.components[i * 4 + 3], separators[i]);
+  }
+});
+
+test('an unsuccessful chunk leaves the entire grouped original intact', async () => {
+  const original = { components: [paragraph('First long paragraph. '.repeat(60)), paragraph('Second long paragraph. '.repeat(60))] };
+  let calls = 0;
+  const output = await api.translateStory(original, async () => { if (++calls === 2) throw Error('failure'); return '部分译文。'; });
+  assert.deepEqual(output.story.components, original.components); assert.equal(output.changed, false);
+});
+
+test('grouped translations are idempotent, including repeated source paragraphs', async () => {
+  const original = { components: [paragraph('Same text.'), paragraph('Same text.'), paragraph('Final text.'), { role: 'image' }, paragraph('More text.')] };
+  const first = await api.translateStory(original, async () => '合并后的中文。');
+  assert.equal(first.stats.translated, 4); assert.equal(first.stats.translatedGroups, 2);
+  assert.equal(first.story.components[3][api.SOURCE_COUNT], 3);
+  let calls = 0;
+  const second = await api.translateStory(first.story, async () => { calls++; return '不应重复翻译。'; });
+  assert.equal(calls, 0); assert.equal(second.changed, false); assert.deepEqual(second.story, first.story);
+});
+
+test('legacy individual translations do not cause earlier groups to be skipped', async () => {
+  const old = paragraph('旧版中文。'); old[api.TRANSLATION_MARKER] = true;
+  const original = { components: [paragraph('New text.'), paragraph('Already translated.'), old, paragraph('Other new text.')] };
+  const sent = [];
+  const result = await api.translateStory(original, async text => { sent.push(text); return '新译文。'; });
+  assert.deepEqual(sent.sort(), ['New text.', 'Other new text.'].sort());
+  assert.equal(result.stats.translated, 2);
 });
