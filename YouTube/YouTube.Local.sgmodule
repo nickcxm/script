@@ -1,0 +1,13 @@
+#!name=YouTube Local @nickcxm
+#!desc=本地去广告、可选隐藏 Shorts、字幕翻译及后台播放能力字段修改；无第三方 Worker。播放回退需实机验证。
+#!author=nickcxm
+#!homepage=https://github.com/nickcxm/script/tree/main/YouTube
+#!arguments=屏蔽上传按钮:true,屏蔽选段按钮:true,屏蔽Shorts按钮:false,字幕翻译语言:off,启用后台与画中画:true,启用播放回退:true,启用调试模式:false
+#!arguments-desc=布尔参数填 true/false。字幕翻译填 off、zh-Hans、zh-Hant、en 等语言代码。Shorts 开关控制入口及已识别的内容卡片。播放回退在本地返回空响应，尝试让客户端回到 player/get_watch；若播放失败可关闭。启用本模块时请关闭其他 YouTube 响应修改模块。需开启 MITM 并信任证书。
+
+[Script]
+nickcxm.youtube.response = type=http-response, pattern=^https:\/\/youtubei\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(\?.*)?$, requires-body=true, binary-body-mode=true, max-size=16777216, timeout=20, script-path=https://raw.githubusercontent.com/nickcxm/script/main/YouTube/youtube.response.js, argument="{"blockUpload":{{{屏蔽上传按钮}}},"blockImmersive":{{{屏蔽选段按钮}}},"blockShorts":{{{屏蔽Shorts按钮}}},"captionLang":"{{{字幕翻译语言}}}","enablePlayback":{{{启用后台与画中画}}},"debug":{{{启用调试模式}}}}"
+nickcxm.youtube.request.init = type=http-request, pattern=^https:\/\/[\w-]+\.googlevideo\.com\/initplayback\?(?:[^#]*&)?ack(?:=|&|$), script-path=https://raw.githubusercontent.com/nickcxm/script/main/YouTube/youtube.request.js, argument="{"fallbackInit":{{{启用播放回退}}}}"
+
+[MITM]
+hostname = %APPEND% *.googlevideo.com, youtubei.googleapis.com
