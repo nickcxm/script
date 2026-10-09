@@ -1,5 +1,5 @@
 /*
- * Bloomberg Google-only body translation for Surge — 20261009-google-2.
+ * Bloomberg Google-only body translation for Surge — 20261009-google-numbered-2.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to Google's unauthenticated translation endpoint.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,13 +7,15 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261009-google-2';
+  const VERSION = '20261009-google-numbered-2';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
   const LEGACY_PREFIX = '【中文译文】';
   const TRANSLATION_MARKER = '_nickcxmTranslation';
   const SOURCE_COUNT = '_nickcxmSourceParagraphs';
+  const PARAGRAPH_ID = '_nickcxmParagraphId';
+  const SOURCE_IDS = '_nickcxmSourceIds';
   const MAX_BODY = 1024 * 1024;
   const MAX_COMPONENTS = 500;
   const MAX_REQUESTS = 48;
@@ -49,16 +51,16 @@
       (component[TRANSLATION_MARKER] === true || component.parts[0].text.startsWith(LEGACY_PREFIX));
   }
 
-  function splitText(text) {
+  function splitText(text, limit = CHUNK_SIZE) {
     // Prefer sentence/space boundaries; retain every source character.
     // Array.from avoids splitting UTF-16 surrogate pairs in long paragraphs.
     const characters = Array.from(text);
     const chunks = [];
     let position = 0;
     while (position < characters.length) {
-      let end = Math.min(position + CHUNK_SIZE, characters.length);
+      let end = Math.min(position + limit, characters.length);
       if (end < characters.length) {
-        for (let i = end - 1; i > position + CHUNK_SIZE / 2; i--) {
+        for (let i = end - 1; i > position + limit / 2; i--) {
           if (/\s/.test(characters[i])) { end = i + 1; break; }
         }
       }
@@ -101,138 +103,210 @@
       }
       // Surge's HTTP timeout is also set. The timer protects against a callback
       // that never fires, and ignores late callbacks without a second $done.
-      schedule(() => finish(new Error('Translation timeout')), timeoutMs);
+      schedule(() => finish(Object.assign(new Error('Translation timeout'), { code: 'timeout' })), timeoutMs);
       try {
         httpClient.get(googleRequest(text, timeoutMs), (error, response, body) => {
           if (settled) return;
-          if (error) { finish(new Error('Translation network failure')); return; }
+          if (error) { finish(Object.assign(new Error('Translation network failure'), { code: 'network' })); return; }
           if (Number(response?.status ?? response?.statusCode) !== 200) {
-            finish(new Error('Translation HTTP failure')); return;
+            finish(Object.assign(new Error('Translation HTTP failure'), { code: 'http', status: Number(response?.status ?? response?.statusCode) || 0 })); return;
           }
           try { finish(null, parseTranslation(body)); }
-          catch (_) { finish(new Error('Translation response failure')); }
+          catch (_) { finish(Object.assign(new Error('Translation response failure'), { code: 'response' })); }
         });
       } catch (_) { finish(new Error('Translation request failure')); }
     });
   }
 
+  function marker(id) { return '【' + id + '】'; }
+  const MARKERS = /[【\[［]\s*(?:[pPＰｐ]\s*)?([0-9０-９](?:[ \t]*[0-9０-９])*)\s*[】\]］]/g;
+  function markerNumber(value) {
+    return Number(value.replace(/\s/g, '').replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 65296)));
+  }
+
+  function cleanLegacy(text) {
+    return text.replace(/^【中文译文】\s*/, '').replace(/\s*（翻译：谷歌）\s*$/, '').trim();
+  }
+
+  // Return safe correspondence ranges, not a guessed one-to-one mapping.
+  // Full numbered output maps by ID, even if its order differs. Missing
+  // numbers merge only the unresolved consecutive range. Invalid numbering
+  // preserves the whole batch translation as a merged block.
+  function alignTranslation(text, ids) {
+    text = cleanLegacy(text);
+    const matches = Array.from(text.matchAll(new RegExp(MARKERS.source, 'g')));
+    const valid = matches.every(item => ids.includes(markerNumber(item[1]))) &&
+      new Set(matches.map(item => markerNumber(item[1]))).size === matches.length;
+    const merged = () => ({ mode: 'merged', pieces: [{ ids, text }] });
+    if (!text) throw new Error('Google returned empty translation');
+    if (!matches.length || !valid) return merged();
+    const before = text.slice(0, matches[0].index).trim();
+    if (matches.length === ids.length && !before) {
+      const pieces = matches.map((item, i) => ({ ids: [markerNumber(item[1])],
+        text: text.slice(item.index + item[0].length, matches[i + 1]?.index ?? text.length).trim() }));
+      if (pieces.some(piece => !piece.text)) return merged();
+      return { mode: 'exact', pieces };
+    }
+    const positions = matches.map(item => ids.indexOf(markerNumber(item[1])));
+    if (positions.some((value, i) => i && value <= positions[i - 1])) return merged();
+    if (positions[0] === 0 && before) return merged();
+    if (positions[0] > 0 && !before) return merged();
+    const pieces = [];
+    if (before) pieces.push({ ids: ids.slice(0, positions[0]), text: before });
+    for (let i = 0; i < matches.length; i++) {
+      const content = text.slice(matches[i].index + matches[i][0].length, matches[i + 1]?.index ?? text.length).trim();
+      if (!content) return merged();
+      pieces.push({ ids: ids.slice(positions[i], positions[i + 1] ?? ids.length), text: content });
+    }
+    return { mode: 'partial', pieces };
+  }
+
+  function displayTranslation(piece) {
+    // Already merged raw output may contain valid or damaged markers. Keep
+    // it verbatim for manual checking, and add the known source range above.
+    return piece.ids.map(marker).join('') + '\n' + piece.text;
+  }
+
+  function numberedParagraph(component, id) {
+    const prefix = marker(id);
+    if (component[PARAGRAPH_ID] === id && component.parts?.[0]?.role === 'text' &&
+        component.parts[0].text === prefix + ' ') return component;
+    if (component[PARAGRAPH_ID] === id && component.parts?.[0]?.role === 'text' &&
+        component.parts[0].text === '【p' + id + '】 ') {
+      return { ...component, parts: [{ ...component.parts[0], text: prefix + ' ' }, ...component.parts.slice(1)] };
+    }
+    const parts = Array.isArray(component.parts) ? component.parts : [];
+    return { ...component, [PARAGRAPH_ID]: id, parts: [{ role: 'text', text: prefix + ' ' }, ...parts] };
+  }
+
+  function readableError(error) {
+    if (error?.code === 'http') return 'Google 翻译返回 HTTP ' + error.status + '。';
+    if (error?.code === 'timeout') return 'Google 翻译超时。';
+    if (error?.code === 'network') return 'Google 翻译网络请求失败。';
+    if (error?.code === 'response') return 'Google 翻译返回的数据无法解析。';
+    if (error?.code === 'limit') return '本篇文章超过翻译请求数量限制。';
+    return 'Google 翻译失败或正文结构无法解析。';
+  }
+
   async function translateStory(story, translate, params = DEFAULTS, clock = Date.now) {
     if (!story || typeof story !== 'object' || Array.isArray(story) ||
-        !Array.isArray(story.components) || story.components.length > MAX_COMPONENTS) {
-      throw new Error('Unsupported story response');
-    }
+        !Array.isArray(story.components) || story.components.length > MAX_COMPONENTS) throw new Error('Unsupported story response');
     const before = JSON.stringify(story);
-    story = { ...story, components: story.components.filter(item => !item?.[INFO_MARKER]) };
-    const started = clock();
-    const deadline = started + TOTAL_TIMEOUT_MS;
-    const jobs = [];
-    const unique = new Map();
-    const covered = new Set();
-    // A grouped translation covers N consecutive source paragraphs before it.
-    // Older paragraph-by-paragraph translations have no count and cover one.
-    for (let index = 0; index < story.components.length; index++) {
-      const component = story.components[index];
-      if (!isTranslation(component)) continue;
-      const count = Number.isInteger(component[SOURCE_COUNT]) && component[SOURCE_COUNT] > 0 &&
-        component[SOURCE_COUNT] <= MAX_COMPONENTS ? component[SOURCE_COUNT] : 1;
-      for (let offset = 1; offset <= count; offset++) {
-        const previous = story.components[index - offset];
-        if (previous?.role !== 'p' || isTranslation(previous)) break;
-        covered.add(index - offset);
-      }
-    }
-    let malformed = 0;
-    let requestCount = 0;
-    let group = null;
-    function flushGroup() {
-      if (!group) return;
-      const source = group.texts.join('\n\n');
-      let job = unique.get(source);
-      if (!job) {
-        const chunks = splitText(source);
-        if (requestCount + chunks.length > MAX_REQUESTS) { group = null; return; }
-        requestCount += chunks.length;
-        job = { source, chunks, translation: null };
-        unique.set(source, job);
-      }
-      jobs.push({ index: group.end, count: group.texts.length, job });
-      group = null;
-    }
-    for (let index = 0; index < story.components.length; index++) {
-      const component = story.components[index];
-      // Every non-body component (especially images and webviews) separates
-      // runs. Never merge across a skipped/malformed/already translated item.
-      if (component?.role !== 'p' || isTranslation(component) || covered.has(index)) {
-        flushGroup(); continue;
-      }
-      let source;
-      try { source = extractText(component.parts).trim(); }
-      catch (_) { malformed++; flushGroup(); continue; }
-      if (!source || !/[A-Za-z]/.test(source)) { flushGroup(); continue; }
-      if (!group) group = { texts: [], end: index };
-      group.texts.push(source);
-      group.end = index;
-    }
-    flushGroup();
-    const pending = Array.from(unique.values());
-    let next = 0;
-    let failed = malformed;
-    let expired = 0;
-    let requests = 0;
-    async function worker() {
-      while (next < pending.length) {
-        const job = pending[next++];
-        if (clock() >= deadline) { expired++; continue; }
-        const translated = [];
-        try {
-          for (const chunk of job.chunks) {
-            const remaining = deadline - clock();
-            if (remaining <= 0) throw new Error('Translation deadline');
-            requests++;
-            const value = await translate(chunk, Math.min(REQUEST_TIMEOUT_MS, remaining));
-            if (typeof value !== 'string' || !value.trim()) throw new Error('Empty translation');
-            translated.push(value.trim());
-          }
-          job.translation = translated.join('');
-        } catch (_) { failed++; }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
-    const successful = jobs.filter(item => item.job.translation);
-    const after = new Map(successful.map(item => [item.index, item]));
+    const source = story.components.filter(item => !item?.[INFO_MARKER]);
     const components = [];
-    let labelsRemoved = 0;
-    for (let index = 0; index < story.components.length; index++) {
-      // Keep the original object and all of its nested links exactly as parsed.
-      const original = story.components[index];
-      if (isTranslation(original) && original.parts[0].text.startsWith(LEGACY_PREFIX)) {
-        components.push({ ...original, [TRANSLATION_MARKER]: true, parts: [{ ...original.parts[0],
-          text: original.parts[0].text.slice(LEGACY_PREFIX.length).replace(/^\s*\n?/, '') }] });
-        labelsRemoved++;
+    const entries = new Map();
+    let id = 0;
+    for (const original of source) {
+      if (original?.role === 'p' && !isTranslation(original)) {
+        id++;
+        const component = numberedParagraph(original, id);
+        components.push(component);
+        entries.set(id, { id, index: components.length - 1, component });
+      } else if (isTranslation(original)) {
+        // Old grouped output has no reliable paragraph-level mapping: retain
+        // it with its source numbers, remove only its obsolete visible labels.
+        const count = Number.isInteger(original[SOURCE_COUNT]) && original[SOURCE_COUNT] > 0 ? original[SOURCE_COUNT] : 1;
+        const ids = Array.isArray(original[SOURCE_IDS]) ? original[SOURCE_IDS] : Array.from({ length: Math.min(count, id) }, (_, i) => id - Math.min(count, id) + i + 1);
+        const content = cleanLegacy(original.parts[0].text);
+        const prefix = ids.map(marker).join('');
+        const numbered = content.startsWith(prefix) ? content : prefix + '\n' + content;
+        components.push({ ...original, [SOURCE_IDS]: ids, parts: [{ ...original.parts[0], text: numbered }] });
       } else components.push(original);
-      if (after.has(index)) {
-        const group = after.get(index);
-        components.push({ role: 'p', [TRANSLATION_MARKER]: true, [SOURCE_COUNT]: group.count,
-          parts: [{ role: 'text', text: group.job.translation + '\n\n（翻译：谷歌）' }] });
+    }
+    const covered = new Set();
+    for (const component of components) if (isTranslation(component)) {
+      for (const number of component[SOURCE_IDS] || []) if (entries.has(number)) covered.add(number);
+    }
+    const deadline = clock() + TOTAL_TIMEOUT_MS;
+    const tasks = [];
+    const errors = new Set();
+    let batch = [];
+    let batchSize = 0;
+    let reserved = 0;
+    function enqueue(task) {
+      const size = task.chunks.length;
+      if (reserved + size > MAX_REQUESTS) { errors.add(readableError({ code: 'limit' })); return; }
+      reserved += size; tasks.push(task);
+    }
+    function flush() {
+      if (batch.length) enqueue({ entries: batch, chunks: [batch.map(entry => marker(entry.id) + entry.source).join('\n\n')], long: false });
+      batch = []; batchSize = 0;
+    }
+    for (let index = 0; index < components.length; index++) {
+      const component = components[index];
+      if (component?.role !== 'p' || isTranslation(component) || covered.has(component[PARAGRAPH_ID])) { flush(); continue; }
+      const entry = entries.get(component[PARAGRAPH_ID]);
+      try {
+        const parts = component.parts.slice(1); // Skip our visible source number.
+        entry.source = extractText(parts).trim();
+      } catch (_) { flush(); errors.add(readableError(null)); continue; }
+      if (!entry.source || !/[A-Za-z]/.test(entry.source)) { flush(); continue; }
+      const length = Array.from(marker(entry.id) + entry.source).length;
+      if (length > CHUNK_SIZE) {
+        flush();
+        enqueue({ entries: [entry], chunks: splitText(entry.source, CHUNK_SIZE - 32).map(chunk => marker(entry.id) + chunk), long: true });
+        continue;
+      }
+      if (batch.length && batchSize + 2 + length > CHUNK_SIZE) flush();
+      batchSize += (batch.length ? 2 : 0) + length;
+      batch.push(entry);
+    }
+    flush();
+    let next = 0, requests = 0, failed = 0;
+    const placements = [];
+    const modes = { exact: 0, partial: 0, merged: 0 };
+    async function worker() {
+      while (next < tasks.length) {
+        const task = tasks[next++];
+        const ids = task.entries.map(entry => entry.id);
+        try {
+          const results = [];
+          for (const chunk of task.chunks) {
+            const remaining = deadline - clock();
+            if (remaining <= 0) { const error = new Error('timeout'); error.code = 'timeout'; throw error; }
+            requests++;
+            const translated = await translate(chunk, Math.min(REQUEST_TIMEOUT_MS, remaining));
+            results.push(alignTranslation(translated, ids));
+          }
+          let result;
+          if (task.long) {
+            const content = results.map(item => item.pieces.map(piece => piece.text).join('')).join('');
+            result = { mode: results.every(item => item.mode === 'exact') ? 'exact' : 'merged', pieces: [{ ids, text: content }] };
+          } else result = results[0];
+          modes[result.mode]++;
+          for (const piece of result.pieces) {
+            const end = entries.get(piece.ids[piece.ids.length - 1]);
+            placements.push({ index: end.index, piece });
+          }
+        } catch (error) { failed++; errors.add(readableError(error)); }
       }
     }
-    if (failed || expired) {
-      const firstParagraph = components.findIndex(item => item?.role === 'p' && !isTranslation(item));
-      if (firstParagraph !== -1) components.splice(firstParagraph + 1, 0, { role: 'p', [INFO_MARKER]: 'notice',
-        parts: [{ role: 'text', text: '翻译提示：部分 Google 翻译失败或超时，未成功的正文分组保留英文，请稍后重试。' }] });
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, worker));
+    const after = new Map(placements.map(item => [item.index, item.piece]));
+    const output = [];
+    for (let index = 0; index < components.length; index++) {
+      output.push(components[index]);
+      if (after.has(index)) {
+        const piece = after.get(index);
+        output.push({ role: 'p', [TRANSLATION_MARKER]: true, [SOURCE_COUNT]: piece.ids.length, [SOURCE_IDS]: piece.ids,
+          parts: [{ role: 'text', text: displayTranslation(piece) }] });
+      }
     }
+    if (errors.size) {
+      const first = output.findIndex(item => item?.role === 'p' && !isTranslation(item));
+      if (first !== -1) output.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: 'notice',
+        parts: [{ role: 'text', text: '翻译提示：' + Array.from(errors).join(' ') + ' 未成功的正文保留原文。' }] });
+    }
+    const result = { ...story, components: output };
     let adConfigChanged = false;
-    const result = { ...story, components };
     if (params.removeAdConfig) {
       if (Object.prototype.hasOwnProperty.call(result, 'adParams')) { delete result.adParams; adConfigChanged = true; }
       if (typeof result.disableAds === 'boolean' && !result.disableAds) { result.disableAds = true; adConfigChanged = true; }
     }
-    // In the provided HAR, webview is related reading, not an advertisement.
-    // Images, webviews, article metadata and all unrecognized roles are retained.
     return { story: result, changed: JSON.stringify(result) !== before,
-      stats: { paragraphs: jobs.reduce((sum, item) => sum + item.count, 0), groups: jobs.length,
-        translated: successful.reduce((sum, item) => sum + item.count, 0), translatedGroups: after.size,
-        requests, failed, expired, adConfigChanged, labelsRemoved, provider: 'google', version: VERSION } };
+      stats: { paragraphs: tasks.reduce((sum, task) => sum + task.entries.length, 0), batches: tasks.length,
+        translated: placements.reduce((sum, item) => sum + item.piece.ids.length, 0), translatedBlocks: placements.length,
+        requests, failed, modes, adConfigChanged, version: VERSION } };
   }
 
   function responseHeaders(headers) {
@@ -268,7 +342,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { VERSION, INFO_MARKER, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();
