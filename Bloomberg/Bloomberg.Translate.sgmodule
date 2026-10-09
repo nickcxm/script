@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=合并正文、无译文标签版（20261009）：只处理 cdn-mobapi 的 stories 详情接口。连续正文合并翻译，保留英文，在分组后追加简体中文；图片等组件切断分组。正文会发往 Google 免费翻译接口，不转发 Bloomberg 凭证。
+#!desc=仅 Google 合并正文版（20261009-google-2）：只处理 cdn-mobapi 的 stories 详情接口。连续正文合并翻译，保留英文，在分组后追加简体中文并标注谷歌；图片等组件切断分组。正文会发往 Google 免费翻译接口，不转发 Bloomberg 凭证。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
 #!arguments=启用翻译:true,去除广告配置:true,调试日志:false
-#!arguments-desc=所有参数填 true/false。仅处理 /wssmobile/v1/stories/ 后接 14 位文章 ID 的 GET JSON 响应。首次打开需等待翻译；失败的正文分组保留英文。免费 Google 接口可能限流或失效。去广告仅删除 adParams 并启用已有 disableAds 标志，不保证所有广告消失。无需给 Google 域名开启 MITM。
+#!arguments-desc=所有参数填 true/false。仅处理 /wssmobile/v1/stories/ 后接 14 位文章 ID 的 GET JSON 响应。首次打开需等待翻译；失败的正文分组保留英文，第一段后提示原因。免费 Google 接口可能限流或失效。去广告仅删除 adParams 并启用已有 disableAds 标志，不保证所有广告消失。无需给 Google 域名开启 MITM。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/4774e69f46305888028eac61b389cd4ebb1e93c3/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}}}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/8c880b4e18149e836ad8cd52cd2f6714f415f6b9/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}}}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
