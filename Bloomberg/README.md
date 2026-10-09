@@ -29,8 +29,9 @@ https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Transl
 ```json
 {
   "role": "p",
+  "_nickcxmTranslation": true,
   "parts": [
-    { "role": "text", "text": "【中文译文】\n这里是上一段的中文翻译。" }
+    { "role": "text", "text": "这里是上一段的中文翻译。" }
   ]
 }
 ```
@@ -39,7 +40,7 @@ https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Transl
 
 标题、摘要、作者、图片说明、嵌入 HTML、链接 URL、行情和证券元数据均不翻译。图片、相关阅读和未知组件保留。
 
-已有 `【中文译文】` 后续段落时不会再次追加。相同正文在同一次请求内只翻译一次。
+译文直接显示中文，不附加“中文译文”文字。新增段落使用不显示在正文中的 `_nickcxmTranslation` 元数据标记避免重复追加；旧版本带标签的译文也可识别并去掉标签。相同正文在同一次请求内只翻译一次。
 
 ## 参数
 
@@ -84,7 +85,7 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt
 
 2026-10-09：
 
-- 20 项自动测试通过：原结构保留、嵌套链接去重、段落追加、幂等、局部失败、并发/请求数量限制、超时、限流、请求隔离以及模块参数和正则。
+- 22 项自动测试通过：原结构保留、完整段落合并、旧标签迁移、嵌套链接去重、段落追加、幂等、局部失败、并发/请求数量限制、超时、限流、请求隔离以及模块参数和正则。
 - 使用 HAR 的响应 JSON，在 Node VM 中运行完整 Surge 脚本，并将 `$httpClient` 适配为真实 HTTPS 请求。
 - 真实 Google 测试：20/20 段翻译成功，20 次请求，耗时约 4.9 秒；组件从 23 个变为 43 个，原有 23 个组件深度比较一致。
 - 没有在这次测试中请求 Bloomberg，也没有发送 HAR 请求头或 Cookie。

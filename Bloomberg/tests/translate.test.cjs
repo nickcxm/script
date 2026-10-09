@@ -60,7 +60,7 @@ test('translation is appended per paragraph; originals, links and other componen
   assert.deepEqual(sent.sort(), ['Read more here.', 'The company postponed its IPO.'].sort());
   assert.deepEqual(output.story.components[0], original.components[0]);
   assert.deepEqual(output.story.components[2], original.components[1]);
-  assert.equal(output.story.components[1].parts[0].text, api.PREFIX + '\n译文：The company postponed its IPO.');
+  assert.equal(output.story.components[1].parts[0].text, '译文：The company postponed its IPO.');
   assert.deepEqual(output.story.components.slice(4), original.components.slice(2));
   assert.deepEqual(output.story.aiSummary, original.aiSummary);
   assert.equal(output.story.title, original.title); assert.equal(output.story.premium, true); assert.equal(output.story.isMetered, true);
@@ -77,7 +77,7 @@ test('translation failure is isolated to its paragraph', async () => {
   assert.equal(output.stats.translated, 1); assert.equal(output.stats.failed, 1);
   assert.deepEqual(output.story.components[0], story.components[0]);
   assert.deepEqual(output.story.components[1], story.components[1]);
-  assert.equal(output.story.components[2].parts[0].text, api.PREFIX + '\n了解更多。');
+  assert.equal(output.story.components[2].parts[0].text, '了解更多。');
 });
 test('empty translations do not replace or append paragraph text', async () => {
   const story = fixture(); const result = await api.translateStory(story, async () => '  ', { removeAdConfig: false });
@@ -182,4 +182,28 @@ test('module scope and parameter rendering match runtime behavior', () => {
   const values = Object.fromEntries(module.match(/^#!arguments=(.*)$/m)[1].split(',').map(item => item.split(':')));
   const argument = line.match(/argument="(.*)"$/)[1].replace(/\{\{\{(.*?)\}\}\}/g, (_, name) => values[name]);
   assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false });
+});
+
+
+test('legacy labels are removed without retranslating original paragraphs', async () => {
+  const original = paragraph('Original English text.');
+  const translated = paragraph(api.LEGACY_PREFIX + '\n已有中文。');
+  let calls = 0;
+  const output = await api.translateStory({ components: [original, translated] }, async () => { calls++; return '不应请求'; });
+  assert.equal(calls, 0); assert.equal(output.changed, true); assert.equal(output.stats.labelsRemoved, 1);
+  assert.deepEqual(output.story.components[0], original);
+  assert.equal(output.story.components[1].parts[0].text, '已有中文。');
+  assert.equal(output.story.components[1][api.TRANSLATION_MARKER], true);
+  const second = await api.translateStory(output.story, async () => { calls++; return '不应请求'; });
+  assert.equal(calls, 0); assert.equal(second.changed, false);
+});
+
+test('split plain-text parts are merged into exactly one paragraph translation request', async () => {
+  const parts = ['The listing of ', 'Firmus Grid Ltd.', ' was poised to be the next beat of ', 'Oliver Curtis', '’s comeback story.'].map(text => ({ role: 'text', text }));
+  const original = { role: 'p', parts }; const sent = [];
+  const result = await api.translateStory({ components: [original] }, async text => { sent.push(text); return '完整段落译文。'; });
+  assert.deepEqual(sent, ['The listing of Firmus Grid Ltd. was poised to be the next beat of Oliver Curtis’s comeback story.']);
+  assert.equal(result.story.components.length, 2); assert.deepEqual(result.story.components[0], original);
+  assert.equal(result.story.components[1].parts[0].text, '完整段落译文。');
+  assert.equal(result.story.components[1][api.TRANSLATION_MARKER], true);
 });

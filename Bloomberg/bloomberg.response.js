@@ -9,7 +9,8 @@
 
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
-  const PREFIX = '【中文译文】';
+  const LEGACY_PREFIX = '【中文译文】';
+  const TRANSLATION_MARKER = '_nickcxmTranslation';
   const MAX_BODY = 1024 * 1024;
   const MAX_COMPONENTS = 500;
   const MAX_REQUESTS = 48;
@@ -42,7 +43,7 @@
   function isTranslation(component) {
     return component?.role === 'p' && Array.isArray(component.parts) && component.parts.length === 1 &&
       component.parts[0]?.role === 'text' && typeof component.parts[0].text === 'string' &&
-      component.parts[0].text.startsWith(PREFIX);
+      (component[TRANSLATION_MARKER] === true || component.parts[0].text.startsWith(LEGACY_PREFIX));
   }
 
   function splitText(text) {
@@ -164,10 +165,17 @@
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker));
     const after = new Map(jobs.filter(item => item.job.translation).map(item => [item.index, item.job.translation]));
     const components = [];
+    let labelsRemoved = 0;
     for (let index = 0; index < story.components.length; index++) {
       // Keep the original object and all of its nested links exactly as parsed.
-      components.push(story.components[index]);
-      if (after.has(index)) components.push({ role: 'p', parts: [{ role: 'text', text: PREFIX + '\n' + after.get(index) }] });
+      const original = story.components[index];
+      if (isTranslation(original) && original.parts[0].text.startsWith(LEGACY_PREFIX)) {
+        components.push({ ...original, [TRANSLATION_MARKER]: true, parts: [{ ...original.parts[0],
+          text: original.parts[0].text.slice(LEGACY_PREFIX.length).replace(/^\s*\n?/, '') }] });
+        labelsRemoved++;
+      } else components.push(original);
+      if (after.has(index)) components.push({ role: 'p', [TRANSLATION_MARKER]: true,
+        parts: [{ role: 'text', text: after.get(index) }] });
     }
     let adConfigChanged = false;
     const result = { ...story, components };
@@ -177,8 +185,8 @@
     }
     // In the provided HAR, webview is related reading, not an advertisement.
     // Images, webviews, article metadata and all unrecognized roles are retained.
-    return { story: result, changed: after.size > 0 || adConfigChanged,
-      stats: { paragraphs: jobs.length, translated: after.size, failed, expired, adConfigChanged } };
+    return { story: result, changed: after.size > 0 || adConfigChanged || labelsRemoved > 0,
+      stats: { paragraphs: jobs.length, translated: after.size, failed, expired, adConfigChanged, labelsRemoved } };
   }
 
   function responseHeaders(headers) {
@@ -214,7 +222,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STORY_URL, PREFIX, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();
