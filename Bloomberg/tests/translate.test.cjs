@@ -254,10 +254,10 @@ test('Baidu signs original UTF-8 query before form encoding and never sends the 
   assert.equal(JSON.stringify(request).includes(params.baiduKey), false);
   assert.equal(request['auto-cookie'], false); assert.equal(request['auto-redirect'], false);
 });
-test('Baidu response paragraphs preserve numbers and error messages are not trusted', () => {
+test('Baidu response paragraphs preserve numbers and expose error fields separately', () => {
   assert.equal(api.parseBaidu('{"trans_result":[{"src":"[1]one","dst":"[1]第一段。"},{"src":"[2]two","dst":"【2】第二段。"}]}'), '[1]第一段。\n\n【2】第二段。');
   for (const code of ['52003','54001','54003','54004','58003']) {
-    assert.throws(() => api.parseBaidu(JSON.stringify({error_code:code,error_msg:'SECRET_PRIVATE_SERVER_MESSAGE'})), error => error.baiduCode===code && !error.message.includes('SECRET'));
+    assert.throws(() => api.parseBaidu(JSON.stringify({error_code:code,error_msg:'SECRET_PRIVATE_SERVER_MESSAGE'})), error => error.baiduCode===code && error.baiduMessage==='SECRET_PRIVATE_SERVER_MESSAGE' && !error.message.includes('SECRET'));
   }
   for (const body of ['{}','<html>bad</html>','{"trans_result":[{"dst":null}]}']) assert.throws(() => api.parseBaidu(body));
 });
@@ -288,7 +288,7 @@ test('Baidu authentication failure disables subsequent primary attempts and safe
   assert.equal(requests.filter(request=>request.url.startsWith('https://translate.googleapis.com')).length,2);
   const story=JSON.parse(result.body); assertOriginals(story,fixture());
   assert.match(story.components[1].parts[0].text,/百度签名错误.*Google 备用/);
-  assert.equal(result.body.includes('SECRET_PRIVATE_SERVER_MESSAGE'),false); assert.equal(result.body.includes('TEST_BAIDU_SECRET'),false);
+  assert.equal(result.body.includes('SECRET_PRIVATE_SERVER_MESSAGE'),true); assert.equal(result.body.includes('TEST_BAIDU_SECRET'),false);
 });
 test('Baidu scheduling spaces request starts and does not postpone forever', async () => {
   let now=0;const started=[];
@@ -357,4 +357,24 @@ test('module parameters have portable names and non-empty defaults', () => {
   }
   for(const [,name] of text.matchAll(/\{\{\{([^}]+)\}\}\}/g))assert.ok(names.has(name));
   assert.deepEqual(api.options({baiduAppId:'UNSET',baiduKey:'UNSET'}),api.options(''));
+});
+
+
+test('Baidu error code and original message appear only in the first annotation', async () => {
+  const {result}=await execute({argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(_,cb){cb(null,{status:200},'{"error_code":"54003","error_msg":"Access Limit"}');}});
+  const story=JSON.parse(result.body);const text=story.components[1].parts[0].text;
+  assert.match(text,/error_code=54003; error_msg=Access Limit/);
+  assert.equal(story.components.filter(item=>item.parts?.[0]?.text?.includes('error_code=')).length,1);
+  assertOriginals(story,fixture());
+});
+test('API errors on non-200 HTTP retain both service code and HTTP status', async () => {
+  const {result}=await execute({argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(_,cb){cb(null,{status:429},'{"error_code":"54003","error_msg":"Access Limit"}');}});
+  assert.match(JSON.parse(result.body).components[1].parts[0].text,/error_code=54003; error_msg=Access Limit; HTTP=429/);
+});
+test('raw and encoded credentials in provider messages are hidden before display', async () => {
+  const params={baiduAppId:'2015063000000001',baiduKey:'TEST_KEY+SECRET'};
+  const {result,logs}=await execute({argument:JSON.stringify({...params,debug:true}),post(_,cb){cb(null,{status:200},JSON.stringify({error_code:'54001',error_msg:'Invalid key '+params.baiduKey+' encoded '+encodeURIComponent(params.baiduKey)+' app '+params.baiduAppId}));}});
+  assert.equal(result.body.includes(params.baiduKey),false);assert.equal(result.body.includes(encodeURIComponent(params.baiduKey)),false);assert.equal(result.body.includes(params.baiduAppId),false);
+  assert.ok(result.body.includes('[已隐藏]'));assert.equal(JSON.stringify(logs).includes(params.baiduKey),false);
+  assert.ok(api.safeBaiduMessage('x'.repeat(500)).length<=300);
 });

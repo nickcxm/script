@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-module-args-fix-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-error-details-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-module-args-fix-1';
+  const VERSION = '20261010-baidu-error-details-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -178,12 +178,22 @@
       timeout: timeoutMs / 1000, 'auto-cookie': false, 'auto-redirect': false };
   }
 
-  function parseBaidu(body) {
+  function safeBaiduMessage(value, params = {}) {
+    let message = typeof value === 'string' ? value : '百度未提供 error_msg';
+    for (const field of ['baiduKey', 'baiduAppId']) {
+      const secret = params[field];
+      if (typeof secret !== 'string' || !secret || secret === 'UNSET') continue;
+      for (const form of new Set([secret, encodeURIComponent(secret)])) message = message.split(form).join('[已隐藏]');
+    }
+    return message.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+  }
+
+  function parseBaidu(body, params = {}) {
     let response;
     try { response = JSON.parse(body); } catch (_) { throw Object.assign(new Error('invalid Baidu JSON'), { code: 'baidu', baiduCode: 'response' }); }
     if (response.error_code && String(response.error_code) !== '52000') {
       const code = /^\d{1,8}$/.test(String(response.error_code)) ? String(response.error_code) : 'unknown';
-      throw Object.assign(new Error('Baidu error'), { code: 'baidu', baiduCode: code });
+      throw Object.assign(new Error('Baidu error'), { code: 'baidu', baiduCode: code, baiduMessage: safeBaiduMessage(response.error_msg, params) });
     }
     if (!Array.isArray(response.trans_result) || !response.trans_result.length ||
         response.trans_result.some(item => typeof item?.dst !== 'string' || !item.dst.trim())) {
@@ -224,10 +234,14 @@
           httpClient.post(baiduRequest(text, params, remaining), (error, response, body) => {
             if (settled) return;
             if (error) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); return; }
-            if (Number(response?.status ?? response?.statusCode) !== 200) {
-              finish(Object.assign(new Error('Baidu HTTP failure'), { code: 'http', status: Number(response?.status ?? response?.statusCode) || 0 })); return;
+            const status = Number(response?.status ?? response?.statusCode);
+            if (status !== 200) {
+              try { parseBaidu(body, params); } catch (error) {
+                if (/^\d+$/.test(error.baiduCode || '')) { error.httpStatus = status; finish(error); return; }
+              }
+              finish(Object.assign(new Error('Baidu HTTP failure'), { code: 'http', status: status || 0 })); return;
             }
-            try { finish(null, parseBaidu(body)); } catch (error) { finish(error); }
+            try { finish(null, parseBaidu(body, params)); } catch (error) { finish(error); }
           });
         } catch (_) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); }
       });
@@ -330,7 +344,10 @@
       const messages = { missing: '未配置百度 APP ID 或密钥。', config: '百度 APP ID 或密钥格式不正确。', length: '百度翻译文本超过长度限制。',
         '52003': '百度服务未授权，请检查 APP ID 和服务开通状态。', '54001': '百度签名错误，请检查密钥。', '54003': '百度访问频率受限。',
         '54004': '百度账户余额不足。', '58002': '百度翻译服务已关闭。', '58003': '百度出口 IP 被限制。', '90107': '百度认证未生效。' };
-      return messages[error.baiduCode] || '百度翻译错误（' + error.baiduCode + '）。';
+      const summary = messages[error.baiduCode] || '百度翻译错误。';
+      if (/^\d+$/.test(error.baiduCode || '')) return summary + ' [error_code=' + error.baiduCode +
+        '; error_msg=' + (error.baiduMessage || '百度未提供 error_msg') + (error.httpStatus ? '; HTTP=' + error.httpStatus : '') + ']';
+      return summary;
     }
     if (error?.provider === 'baidu') {
       if (error.code === 'http') return '百度翻译返回 HTTP ' + error.status + '。';
@@ -522,7 +539,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();
