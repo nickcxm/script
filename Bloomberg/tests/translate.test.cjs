@@ -439,7 +439,7 @@ test('Google backup long fragments reassemble without duplicate paragraph number
   const original={title:'Title',components:[p('Long text about profits. '.repeat(70))]};
   const {result}=await execute({story:original,argument:'{}'});
   const output=JSON.parse(result.body);const translations=translationBlocks(output);
-  assert.equal(translations.length,1);assert.deepEqual(ids(translations[0].parts[0].text),[1]);assertOriginals(output,original);
+  assert.equal(translations.length,1);assert.deepEqual(translations[0][api.SOURCE_IDS],[1]);assert.equal((translations[0].parts[0].text.match(/1\. /g)||[]).length,1);assertOriginals(output,original);
 });
 
 
@@ -483,4 +483,29 @@ test('partially matched merged translation appends to the last source paragraph 
   assert.equal(output.story.components.length,3);assert.equal(output.story.components[0].parts.some(part=>part[api.TRANSLATION_MARKER]),false);
   assert.deepEqual(output.story.components[1][api.INLINE_IDS],[1,2]);assert.deepEqual(output.story.components[2][api.INLINE_IDS],[3]);
   assertOriginals(output.story,original);
+});
+
+
+test('display-only numbering uses 1. and removes the newline between number and translated text', async () => {
+  const translated=await googleStory(fixture(),async query=>ids(query).map(id=>'【'+id+'】中文段落。').join('\n\n'));
+  const displayed=api.formatDisplayNumbers(translated.story);
+  assert.equal(displayed.components[0].parts[0].text,'1. ');
+  assert.equal(displayed.components[0].parts.at(-1).text,'\n1. 中文段落。');
+  assert.ok(!displayed.components[0].parts.at(-1).text.includes('1.\n'));
+  assertOriginals(displayed,fixture());
+  assert.ok(translated.story.components[0].parts[0].text.startsWith('【1】'));
+  const repeated=await googleStory(displayed,async()=>{throw Error('must not request');});
+  assert.equal(repeated.stats.requests,0);
+  assert.deepEqual(api.formatDisplayNumbers(repeated.story),displayed);
+});
+test('final display formatting leaves original body bracket citations and links unchanged', async () => {
+  const original={components:[p('Report citation 【99】 stays as written.'),fixture().components[1]]};
+  const result=await googleStory(original,async query=>ids(query).filter(id=>id!==99).map(id=>'【'+id+'】中文。').join('\n\n'));
+  const displayed=api.formatDisplayNumbers(result.story);
+  assert.equal(displayed.components[0].parts[1].text,original.components[0].parts[0].text);
+  assert.deepEqual(displayed.components[1].parts[2],original.components[1].parts[1]);
+});
+test('merged translation numbers stay together on the translated text line', () => {
+  const original={components:[{role:'p',[api.PARAGRAPH_ID]:2,parts:[{role:'text',text:'【2】 '},{role:'text',text:'Original.'},{role:'text',[api.TRANSLATION_MARKER]:true,text:'\n【1】【2】\n合并译文。'}]}]};
+  assert.equal(api.formatDisplayNumbers(original).components[0].parts[2].text,'\n1. 2. 合并译文。');
 });

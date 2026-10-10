@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-inline-translation-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-number-display-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-inline-translation-1';
+  const VERSION = '20261010-number-display-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -368,11 +368,25 @@
     if (component[PARAGRAPH_ID] === id && component.parts?.[0]?.role === 'text' &&
         component.parts[0].text === prefix + ' ') return component;
     if (component[PARAGRAPH_ID] === id && component.parts?.[0]?.role === 'text' &&
-        component.parts[0].text === '【p' + id + '】 ') {
+        (component.parts[0].text === '【p' + id + '】 ' || component.parts[0].text === id + '. ')) {
       return { ...component, parts: [{ ...component.parts[0], text: prefix + ' ' }, ...component.parts.slice(1)] };
     }
     const parts = Array.isArray(component.parts) ? component.parts : [];
     return { ...component, [PARAGRAPH_ID]: id, parts: [{ role: 'text', text: prefix + ' ' }, ...parts] };
+  }
+
+  function formatDisplayNumbers(story) {
+    const pattern = new RegExp(MARKERS.source + '\\s*', 'g');
+    return { ...story, components: story.components.map(component => {
+      if (!Array.isArray(component.parts) || component[INFO_MARKER]) return component;
+      const parts = component.parts.map((part, index) => {
+        if (typeof part?.text !== 'string') return part;
+        const sourcePrefix = index === 0 && component[PARAGRAPH_ID];
+        if (!sourcePrefix && !part[TRANSLATION_MARKER] && !isTranslation(component)) return part;
+        return { ...part, text: part.text.replace(pattern, (_, number) => markerNumber(number) + '. ') };
+      });
+      return { ...component, parts };
+    }) };
   }
 
   function readableError(error) {
@@ -615,7 +629,7 @@
             output.changed = true;
           }
           output.stats.provider = params.provider; output.stats.googleFallbacks = fallbackCount;
-          if (output.changed) result = { body: JSON.stringify(output.story), headers: responseHeaders($response.headers) };
+          if (output.changed) result = { body: JSON.stringify(formatDisplayNumbers(output.story)), headers: responseHeaders($response.headers) };
           if (params.debug) console.log('[Bloomberg Translate] ' + JSON.stringify(output.stats));
         }
       }
@@ -626,7 +640,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, INLINE_IDS, appendInline, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, INLINE_IDS, appendInline, formatDisplayNumbers, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();
