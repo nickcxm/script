@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=百度主翻译、Google 备用版（20261010-baidu-batch-2000-1）：填写百度高级版 APP ID 和密钥，标题中英双语、正文2000字符批量编号对照，失败自动用 Google，仅在第一段后显示 provider 和百度原始错误码/信息。
+#!desc=百度主翻译、Google 备用版（20261010-baidu-serial-1）：填写百度高级版 APP ID 和密钥，标题中英双语、正文2000字符批量编号对照，失败自动用 Google，仅在第一段后显示 provider 和百度原始错误码/信息。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
 #!arguments=enabled:true,provider:baidu,baidu_appid:UNSET,baidu_key:UNSET,remove_ad_config:true,debug:false
-#!arguments-desc=enabled/ remove_ad_config/ debug 填 true 或 false；provider 填 baidu 或 google；baidu_appid 填 APP ID，baidu_key 填密钥。UNSET 表示未配置，将使用 Google 备用。翻译服务填 baidu（默认）或 google。百度通用翻译高级版需要 APP ID + 密钥，请在对应参数填写；不要分享含密钥的配置。百度最多6路异步请求，发起间隔150ms，单脚本低于10QPS；多篇同时加载仍共享账号配额。百度失败或未配置凭证时用Google备用，并提示原因。百度跨图片汇总正文，每批不超过2000字符；标题放在同批【0】位置并直接写回双语title。正文编号从【1】开始，优先用百度src匹配译文；Google备用保持小批打包。
+#!arguments-desc=enabled/ remove_ad_config/ debug 填 true 或 false；provider 填 baidu 或 google；baidu_appid 填 APP ID，baidu_key 填密钥。UNSET 表示未配置，将使用 Google 备用。翻译服务填 baidu（默认）或 google。百度通用翻译高级版需要 APP ID + 密钥，请在对应参数填写；不要分享含密钥的配置。百度批次严格串行，上一请求完成后才发送下一请求，保留150ms最小发起间隔；多篇同时加载仍共享账号配额。百度失败或未配置凭证时用Google备用，并提示原因。百度跨图片汇总正文，每批不超过2000字符；标题放在同批【0】位置并直接写回双语title。正文编号从【1】开始，优先用百度src匹配译文；Google备用保持小批打包。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/19bb1206a9ab5483dc31a219b17fd84390fd02c1/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"provider":"{{{provider}}}","baiduAppId":"{{{baidu_appid}}}","baiduKey":"{{{baidu_key}}}"}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/42faddddbfa25fb6127af24bb0a6ecf1bede9099/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"provider":"{{{provider}}}","baiduAppId":"{{{baidu_appid}}}","baiduKey":"{{{baidu_key}}}"}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
