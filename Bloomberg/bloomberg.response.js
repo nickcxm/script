@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-google-notice-only-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-inline-translation-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-google-notice-only-1';
+  const VERSION = '20261010-inline-translation-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -16,6 +16,7 @@
   const SOURCE_COUNT = '_nickcxmSourceParagraphs';
   const PARAGRAPH_ID = '_nickcxmParagraphId';
   const SOURCE_IDS = '_nickcxmSourceIds';
+  const INLINE_IDS = '_nickcxmInlineSourceIds';
   const MAX_BODY = 1024 * 1024;
   const MAX_COMPONENTS = 500;
   const MAX_REQUESTS = 48;
@@ -356,6 +357,12 @@
     return piece.ids.map(marker).join('') + '\n' + piece.text;
   }
 
+  function appendInline(component, ids, text) {
+    return { ...component, [INLINE_IDS]: Array.from(new Set([...(component[INLINE_IDS] || []), ...ids])),
+      parts: [...component.parts, { role: 'text', [TRANSLATION_MARKER]: true, [SOURCE_IDS]: ids,
+        text: '\n' + text }] };
+  }
+
   function numberedParagraph(component, id) {
     const prefix = marker(id);
     if (component[PARAGRAPH_ID] === id && component.parts?.[0]?.role === 'text' &&
@@ -412,12 +419,15 @@
         const content = cleanLegacy(original.parts[0].text);
         const prefix = ids.map(marker).join('');
         const numbered = content.startsWith(prefix) ? content : prefix + '\n' + content;
-        components.push({ ...original, [SOURCE_IDS]: ids, parts: [{ ...original.parts[0], text: numbered }] });
+        const parent = components.findIndex(item => item?.[PARAGRAPH_ID] === ids[ids.length - 1]);
+        if (parent !== -1) components[parent] = appendInline(components[parent], ids, numbered);
+        else components.push({ ...original, [SOURCE_IDS]: ids, parts: [{ ...original.parts[0], text: numbered }] });
       } else components.push(original);
     }
     const covered = new Set();
-    for (const component of components) if (isTranslation(component)) {
-      for (const number of component[SOURCE_IDS] || []) if (entries.has(number)) covered.add(number);
+    for (const component of components) {
+      const ids = isTranslation(component) ? component[SOURCE_IDS] : component[INLINE_IDS];
+      for (const number of ids || []) if (entries.has(number)) covered.add(number);
     }
     const deadline = clock() + TOTAL_TIMEOUT_MS;
     const tasks = [];
@@ -451,7 +461,7 @@
       if (component?.role !== 'p' || isTranslation(component) || covered.has(component[PARAGRAPH_ID])) { if (!baiduBatch) flush(); continue; }
       const entry = entries.get(component[PARAGRAPH_ID]);
       try {
-        const parts = component.parts.slice(1); // Skip our visible source number.
+        const parts = component.parts.slice(1).filter(part => !part?.[TRANSLATION_MARKER]); // Skip our visible source number.
         entry.source = extractText(parts).trim();
         if (baiduBatch) entry.source = entry.source.replace(/[\r\n]+/g, ' ');
       } catch (_) { flush(); errors.add(readableError(null)); continue; }
@@ -503,12 +513,8 @@
     const after = new Map(placements.map(item => [item.index, item.piece]));
     const output = [];
     for (let index = 0; index < components.length; index++) {
-      output.push(components[index]);
-      if (after.has(index)) {
-        const piece = after.get(index);
-        output.push({ role: 'p', [TRANSLATION_MARKER]: true, [SOURCE_COUNT]: piece.ids.length, [SOURCE_IDS]: piece.ids,
-          parts: [{ role: 'text', text: displayTranslation(piece) }] });
-      }
+      const piece = after.get(index);
+      output.push(piece ? appendInline(components[index], piece.ids, displayTranslation(piece)) : components[index]);
     }
     if (errors.size) {
       const first = output.findIndex(item => item?.role === 'p' && !isTranslation(item));
@@ -620,7 +626,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, INLINE_IDS, appendInline, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();
