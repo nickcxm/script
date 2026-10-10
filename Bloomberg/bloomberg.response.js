@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-primary-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-provider-once-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-baidu-primary-1';
+  const VERSION = '20261010-provider-once-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -484,15 +484,28 @@
         const contentType = Object.entries($response.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '';
         if (/\bapplication\/json\b/i.test(contentType)) {
           const original = JSON.parse($response.body);
-          const google = limitConcurrency(googleTransport($httpClient), CONCURRENCY);
+          const providerSuccess = { baidu: 0, google: 0 };
+          const countSuccess = (name, translate) => async (text, timeoutMs) => {
+            const value = await translate(text, timeoutMs); providerSuccess[name]++; return value;
+          };
+          const google = countSuccess('google', limitConcurrency(googleTransport($httpClient), CONCURRENCY));
           const fallbackReasons = new Set();
           let fallbackCount = 0;
-          const translate = params.provider === 'baidu' ? primaryWithFallback(baiduTransport($httpClient, params), google, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
+          const translate = params.provider === 'baidu' ? primaryWithFallback(countSuccess('baidu', baiduTransport($httpClient, params)), google, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
           const output = await translateStory(original, translate, { ...params, workerConcurrency: params.provider === 'baidu' ? 6 : CONCURRENCY });
-          if (fallbackReasons.size) {
-            const first = output.story.components.findIndex(item => item?.role === 'p' && !isTranslation(item));
-            if (first !== -1) output.story.components.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: 'notice',
-              parts: [{ role: 'text', text: '翻译提示：' + Array.from(fallbackReasons).join(' ') + ' 已尝试使用 Google 备用；未成功的内容保留原文。' }] });
+          const notices = output.story.components.filter(item => item?.[INFO_MARKER] === 'notice').map(item => item.parts?.[0]?.text).filter(Boolean);
+          output.story.components = output.story.components.filter(item => !item?.[INFO_MARKER]);
+          let provider;
+          if (providerSuccess.baidu && providerSuccess.google) provider = '百度、Google（部分使用 Google 备用）';
+          else if (providerSuccess.baidu) provider = '百度';
+          else if (providerSuccess.google) provider = fallbackCount ? 'Google（百度失败后使用备用）' : 'Google';
+          else if (output.stats.requests) provider = params.provider === 'baidu' ? '百度 → Google（本次未成功）' : 'Google（本次未成功）';
+          else provider = '已有译文（本次未调用翻译接口）';
+          if (fallbackReasons.size) notices.unshift('翻译提示：' + Array.from(fallbackReasons).join(' ') + ' 已尝试使用 Google 备用；未成功的内容保留原文。');
+          const first = output.story.components.findIndex(item => item?.role === 'p' && !isTranslation(item));
+          if (first !== -1) {
+            output.story.components.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: 'provider',
+              parts: [{ role: 'text', text: '翻译服务：' + provider + (notices.length ? '\n' + notices.join('\n') : '') }] });
             output.changed = true;
           }
           output.stats.provider = params.provider; output.stats.googleFallbacks = fallbackCount;

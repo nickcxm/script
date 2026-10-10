@@ -277,7 +277,8 @@ test('Baidu succeeds without Google and original credentials never reach request
   assert.equal(requests.length,2); assert.ok(requests.every(request => request.url.startsWith('https://fanyi-api.baidu.com')));
   assert.equal(JSON.stringify(requests).includes('TEST_BAIDU_SECRET'),false); assert.equal(JSON.stringify(requests).includes('SECRET_COOKIE'),false);
   assert.equal(JSON.stringify(logs).includes('TEST_BAIDU_SECRET'),false); assertOriginals(JSON.parse(result.body),fixture());
-  assert.equal(JSON.parse(result.body).components.some(item => item[api.INFO_MARKER]),false);
+  assert.equal(JSON.parse(result.body).components.filter(item => item[api.INFO_MARKER] === 'provider').length,1);
+  assert.equal(JSON.parse(result.body).components[1].parts[0].text,'翻译服务：百度');
 });
 test('Baidu authentication failure disables subsequent primary attempts and safely uses Google', async () => {
   const { result, requests } = await execute({ argument: JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_BAIDU_SECRET'}), post(_,cb) {
@@ -320,4 +321,27 @@ test('service network failures stop new Baidu calls and both failures retain ori
   assert.equal(requests.filter(request=>request.url.startsWith('https://fanyi-api.baidu.com')).length,1);
   const story=JSON.parse(result.body);assertOriginals(story,fixture());assert.equal(story.components.some(item=>item[api.TRANSLATION_MARKER]),false);
   assert.match(story.components[1].parts[0].text,/百度翻译网络请求失败.*Google 备用/);
+});
+
+
+test('provider appears exactly once after the first original paragraph, not on Chinese paragraphs', async () => {
+  const {result}=await execute(); const story=JSON.parse(result.body);
+  assert.equal(story.components[1][api.INFO_MARKER],'provider'); assert.equal(story.components[1].parts[0].text,'翻译服务：Google');
+  assert.equal(story.components.filter(item=>item[api.INFO_MARKER]==='provider').length,1);
+  assert.ok(story.components.filter(item=>item[api.TRANSLATION_MARKER]).every(item=>!item.parts[0].text.includes('翻译服务')));
+});
+test('actual Google backup provider and error reason share the first-paragraph annotation', async () => {
+  const {result}=await execute({argument:'{}'});const story=JSON.parse(result.body);
+  assert.equal(story.components.filter(item=>item[api.INFO_MARKER]).length,1);
+  assert.match(story.components[1].parts[0].text,/翻译服务：Google（百度失败后使用备用）/);
+  assert.match(story.components[1].parts[0].text,/未配置百度 APP ID 或密钥/);
+});
+test('mixed successful primary and backup translations report both providers without per-block labels', async () => {
+  let posts=0;
+  const {result}=await execute({argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(options,cb){
+    if(++posts===1){const query=new URLSearchParams(options.body).get('q');cb(null,{status:200},JSON.stringify({trans_result:ids(query).map(id=>({dst:'【'+id+'】百度中文。'}))}));}
+    else cb(null,{status:200},'{"error_code":"54003"}');
+  }});
+  const story=JSON.parse(result.body);assert.match(story.components[1].parts[0].text,/翻译服务：百度、Google/);
+  assert.equal(story.components.filter(item=>item[api.INFO_MARKER]).length,1);assertOriginals(story,fixture());
 });
