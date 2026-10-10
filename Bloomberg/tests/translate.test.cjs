@@ -440,3 +440,16 @@ test('Google backup long fragments reassemble without duplicate paragraph number
   const output=JSON.parse(result.body);const translations=output.components.filter(item=>item[api.TRANSLATION_MARKER]);
   assert.equal(translations.length,1);assert.deepEqual(ids(translations[0].parts[0].text),[1]);assertOriginals(output,original);
 });
+
+
+test('Baidu transport has at most one request in flight even when callers start concurrently', async () => {
+  let active=0,peak=0,calls=0;
+  const schedule=(callback,ms)=>{if(ms<1500)return setTimeout(callback,ms);};
+  const transport=api.baiduTransport({post(options,callback){
+    active++;calls++;peak=Math.max(peak,active);
+    const query=new URLSearchParams(options.body).get('q');
+    setTimeout(()=>{active--;callback(null,{status:200},JSON.stringify({trans_result:[{src:query,dst:'中文。'}]}));},10);
+  }},{baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'},schedule);
+  const results=await Promise.all(Array.from({length:6},(_,i)=>transport('【'+(i+1)+'】English.',4500)));
+  assert.equal(peak,1);assert.equal(active,0);assert.equal(calls,6);assert.equal(results.length,6);
+});

@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-batch-2000-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-serial-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-baidu-batch-2000-1';
+  const VERSION = '20261010-baidu-serial-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -233,7 +233,7 @@
   function baiduTransport(httpClient, params, schedule = setTimeout, clock = Date.now) {
     let nextStart = 0;
     let unavailable = null;
-    return async (text, timeoutMs) => {
+    const serial = limitConcurrency(async (text, timeoutMs) => {
       if (unavailable) throw unavailable;
       // Validate credentials before reserving a time slot. Only timestamps are
       // retained in this run; neither credentials nor article text are stored.
@@ -273,7 +273,8 @@
           });
         } catch (_) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); }
       });
-    };
+    }, 1);
+    return (text, timeoutMs) => serial(text, timeoutMs).catch(error => { error.provider = 'baidu'; throw error; });
   }
 
   function limitConcurrency(translate, maximum) {
