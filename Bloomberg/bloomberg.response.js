@@ -1,13 +1,13 @@
 /*
- * Bloomberg Google-only body translation for Surge — 20261009-google-numbered-2.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-primary-1.
  * Independently written against a user-provided story JSON response.
- * Only paragraph text is sent to Google's unauthenticated translation endpoint.
+ * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
  */
 (() => {
   'use strict';
 
-  const VERSION = '20261009-google-numbered-2';
+  const VERSION = '20261010-baidu-primary-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -23,13 +23,16 @@
   const TOTAL_TIMEOUT_MS = 45000;
   const REQUEST_TIMEOUT_MS = 7000;
   const CONCURRENCY = 3;
-  const DEFAULTS = Object.freeze({ enabled: true, removeAdConfig: true, debug: false });
+  const DEFAULTS = Object.freeze({ enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: '', baiduKey: '' });
 
   function options(argument) {
     const supplied = typeof argument === 'string' ? JSON.parse(argument || '{}') : argument || {};
     if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new Error('Invalid options');
     const result = { ...DEFAULTS };
     for (const key of Object.keys(DEFAULTS)) if (typeof supplied[key] === 'boolean') result[key] = supplied[key];
+    if (typeof supplied.provider === 'string') result.provider = supplied.provider.trim().toLowerCase();
+    if (!['baidu', 'google'].includes(result.provider)) throw new Error('Invalid provider');
+    for (const key of ['baiduAppId', 'baiduKey']) if (typeof supplied[key] === 'string') result[key] = supplied[key].trim();
     return result;
   }
 
@@ -118,6 +121,147 @@
     });
   }
 
+  const BAIDU_URL = 'https://fanyi-api.baidu.com/api/trans/vip/translate';
+  const BAIDU_INTERVAL_MS = 150; // Up to ~7 starts/sec per script, below advanced 10 QPS.
+
+  function utf8Bytes(value) {
+    const encoded = encodeURIComponent(value);
+    const result = [];
+    for (let i = 0; i < encoded.length; i++) {
+      if (encoded[i] === '%') { result.push(parseInt(encoded.slice(i + 1, i + 3), 16)); i += 2; }
+      else result.push(encoded.charCodeAt(i));
+    }
+    return result;
+  }
+
+  // Local RFC 1321 MD5 for Baidu's official signing protocol. No runtime dependency.
+  function md5(value) {
+    const input = utf8Bytes(value), length = input.length;
+    const data = new Uint8Array(Math.ceil((length + 9) / 64) * 64);
+    data.set(input); data[length] = 128;
+    const bits = length * 8;
+    for (let i = 0; i < 8; i++) data[data.length - 8 + i] = Math.floor(bits / Math.pow(256, i)) & 255;
+    const shifts = [7,12,17,22, 5,9,14,20, 4,11,16,23, 6,10,15,21];
+    const constants = Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) | 0);
+    let a0 = 0x67452301, b0 = 0xefcdab89 | 0, c0 = 0x98badcfe | 0, d0 = 0x10325476;
+    for (let offset = 0; offset < data.length; offset += 64) {
+      const words = Array.from({ length: 16 }, (_, i) => {
+        const at = offset + i * 4;
+        return data[at] | data[at + 1] << 8 | data[at + 2] << 16 | data[at + 3] << 24;
+      });
+      let a = a0, b = b0, c = c0, d = d0;
+      for (let i = 0; i < 64; i++) {
+        const round = Math.floor(i / 16);
+        const f = round === 0 ? (b & c) | (~b & d) : round === 1 ? (d & b) | (~d & c) : round === 2 ? b ^ c ^ d : c ^ (b | ~d);
+        const g = round === 0 ? i : round === 1 ? (5 * i + 1) % 16 : round === 2 ? (3 * i + 5) % 16 : 7 * i % 16;
+        const x = (a + f + constants[i] + words[g]) | 0, shift = shifts[round * 4 + i % 4];
+        const rotated = x << shift | x >>> (32 - shift);
+        a = d; d = c; c = b; b = (b + rotated) | 0;
+      }
+      a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0;
+    }
+    return [a0,b0,c0,d0].map(word => [0,8,16,24].map(shift => ((word >>> shift) & 255).toString(16).padStart(2,'0')).join('')).join('');
+  }
+
+  function baiduRequest(text, params, timeoutMs, salt = String(Date.now()) + String(Math.floor(Math.random() * 1000000))) {
+    if (!params.baiduAppId || !params.baiduKey) throw Object.assign(new Error('missing Baidu credentials'), { code: 'baidu', baiduCode: 'missing' });
+    if (!/^\d{5,30}$/.test(params.baiduAppId) || params.baiduKey.length > 512 || /[\r\n]/.test(params.baiduKey)) {
+      throw Object.assign(new Error('invalid Baidu credentials'), { code: 'baidu', baiduCode: 'config' });
+    }
+    if (Array.from(text).length > 6000 || utf8Bytes(text).length > 6000) throw Object.assign(new Error('Baidu query too long'), { code: 'baidu', baiduCode: 'length' });
+    const fields = { q: text, from: 'en', to: 'zh', appid: params.baiduAppId, salt,
+      sign: md5(params.baiduAppId + text + salt + params.baiduKey) };
+    return { url: BAIDU_URL, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: Object.entries(fields).map(([key, value]) => encodeURIComponent(key) + '=' + encodeURIComponent(value)).join('&'),
+      timeout: timeoutMs / 1000, 'auto-cookie': false, 'auto-redirect': false };
+  }
+
+  function parseBaidu(body) {
+    let response;
+    try { response = JSON.parse(body); } catch (_) { throw Object.assign(new Error('invalid Baidu JSON'), { code: 'baidu', baiduCode: 'response' }); }
+    if (response.error_code && String(response.error_code) !== '52000') {
+      const code = /^\d{1,8}$/.test(String(response.error_code)) ? String(response.error_code) : 'unknown';
+      throw Object.assign(new Error('Baidu error'), { code: 'baidu', baiduCode: code });
+    }
+    if (!Array.isArray(response.trans_result) || !response.trans_result.length ||
+        response.trans_result.some(item => typeof item?.dst !== 'string' || !item.dst.trim())) {
+      throw Object.assign(new Error('invalid Baidu result'), { code: 'baidu', baiduCode: 'response' });
+    }
+    return response.trans_result.map(item => item.dst).join('\n\n').trim();
+  }
+
+  function baiduTransport(httpClient, params, schedule = setTimeout, clock = Date.now) {
+    let nextStart = 0;
+    let unavailable = null;
+    return async (text, timeoutMs) => {
+      if (unavailable) throw unavailable;
+      // Validate credentials before reserving a time slot. Only timestamps are
+      // retained in this run; neither credentials nor article text are stored.
+      const deadline = clock() + timeoutMs;
+      try { baiduRequest(text, params, timeoutMs, 'validation'); }
+      catch (error) { unavailable = error; throw error; }
+      const wait = Math.max(0, nextStart - clock());
+      nextStart = Math.max(nextStart, clock()) + BAIDU_INTERVAL_MS;
+      if (wait >= timeoutMs) throw Object.assign(new Error('Baidu scheduling timeout'), { code: 'timeout', provider: 'baidu' });
+      if (wait) await new Promise(resolve => schedule(resolve, wait));
+      if (unavailable) throw unavailable;
+      const remaining = deadline - clock();
+      if (remaining <= 0) throw Object.assign(new Error('Baidu timeout'), { code: 'timeout', provider: 'baidu' });
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error, result) => {
+          if (settled) return; settled = true;
+          if (error) {
+            error.provider = 'baidu';
+            unavailable = error; // Circuit breaker for this run; no automatic primary retries.
+            reject(error);
+          } else resolve(result);
+        };
+        schedule(() => finish(Object.assign(new Error('Baidu timeout'), { code: 'timeout' })), remaining);
+        try {
+          httpClient.post(baiduRequest(text, params, remaining), (error, response, body) => {
+            if (settled) return;
+            if (error) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); return; }
+            if (Number(response?.status ?? response?.statusCode) !== 200) {
+              finish(Object.assign(new Error('Baidu HTTP failure'), { code: 'http', status: Number(response?.status ?? response?.statusCode) || 0 })); return;
+            }
+            try { finish(null, parseBaidu(body)); } catch (error) { finish(error); }
+          });
+        } catch (_) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); }
+      });
+    };
+  }
+
+  function limitConcurrency(translate, maximum) {
+    const queue = [];
+    let active = 0;
+    function drain() {
+      while (active < maximum && queue.length) {
+        const item = queue.shift();
+        const remaining = item.deadline - Date.now();
+        if (remaining <= 0) { item.reject(Object.assign(new Error('Fallback queue timeout'), { code: 'timeout' })); continue; }
+        active++;
+        Promise.resolve().then(() => translate(item.text, remaining)).then(item.resolve, item.reject).finally(() => { active--; drain(); });
+      }
+    }
+    return (text, timeoutMs) => new Promise((resolve, reject) => {
+      queue.push({ text, deadline: Date.now() + timeoutMs, resolve, reject }); drain();
+    });
+  }
+
+  function primaryWithFallback(primary, google, onFallback) {
+    return async (text, timeoutMs) => {
+      const start = Date.now();
+      try { return await primary(text, Math.max(1, Math.min(4500, timeoutMs - 1500))); }
+      catch (error) {
+        onFallback(error);
+        const remaining = timeoutMs - (Date.now() - start);
+        if (remaining <= 0) throw Object.assign(new Error('Fallback timeout'), { code: 'timeout' });
+        return google(text, remaining);
+      }
+    };
+  }
+
   function marker(id) { return '【' + id + '】'; }
   const MARKERS = /[【\[［]\s*(?:[pPＰｐ]\s*)?([0-9０-９](?:[ \t]*[0-9０-９])*)\s*[】\]］]/g;
   function markerNumber(value) {
@@ -180,6 +324,16 @@
   }
 
   function readableError(error) {
+    if (error?.code === 'baidu') {
+      const messages = { missing: '未配置百度 APP ID 或密钥。', config: '百度 APP ID 或密钥格式不正确。', length: '百度翻译文本超过长度限制。',
+        '52003': '百度服务未授权，请检查 APP ID 和服务开通状态。', '54001': '百度签名错误，请检查密钥。', '54003': '百度访问频率受限。',
+        '54004': '百度账户余额不足。', '58002': '百度翻译服务已关闭。', '58003': '百度出口 IP 被限制。', '90107': '百度认证未生效。' };
+      return messages[error.baiduCode] || '百度翻译错误（' + error.baiduCode + '）。';
+    }
+    if (error?.provider === 'baidu') {
+      if (error.code === 'http') return '百度翻译返回 HTTP ' + error.status + '。';
+      return error.code === 'timeout' ? '百度翻译超时。' : '百度翻译网络请求失败。';
+    }
     if (error?.code === 'http') return 'Google 翻译返回 HTTP ' + error.status + '。';
     if (error?.code === 'timeout') return 'Google 翻译超时。';
     if (error?.code === 'network') return 'Google 翻译网络请求失败。';
@@ -281,7 +435,7 @@
         } catch (error) { failed++; errors.add(readableError(error)); }
       }
     }
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(params.workerConcurrency || CONCURRENCY, tasks.length) }, worker));
     const after = new Map(placements.map(item => [item.index, item.piece]));
     const output = [];
     for (let index = 0; index < components.length; index++) {
@@ -330,7 +484,18 @@
         const contentType = Object.entries($response.headers || {}).find(([name]) => name.toLowerCase() === 'content-type')?.[1] || '';
         if (/\bapplication\/json\b/i.test(contentType)) {
           const original = JSON.parse($response.body);
-          const output = await translateStory(original, googleTransport($httpClient), params);
+          const google = limitConcurrency(googleTransport($httpClient), CONCURRENCY);
+          const fallbackReasons = new Set();
+          let fallbackCount = 0;
+          const translate = params.provider === 'baidu' ? primaryWithFallback(baiduTransport($httpClient, params), google, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
+          const output = await translateStory(original, translate, { ...params, workerConcurrency: params.provider === 'baidu' ? 6 : CONCURRENCY });
+          if (fallbackReasons.size) {
+            const first = output.story.components.findIndex(item => item?.role === 'p' && !isTranslation(item));
+            if (first !== -1) output.story.components.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: 'notice',
+              parts: [{ role: 'text', text: '翻译提示：' + Array.from(fallbackReasons).join(' ') + ' 已尝试使用 Google 备用；未成功的内容保留原文。' }] });
+            output.changed = true;
+          }
+          output.stats.provider = params.provider; output.stats.googleFallbacks = fallbackCount;
           if (output.changed) result = { body: JSON.stringify(output.story), headers: responseHeaders($response.headers) };
           if (params.debug) console.log('[Bloomberg Translate] ' + JSON.stringify(output.stats));
         }
@@ -342,7 +507,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();

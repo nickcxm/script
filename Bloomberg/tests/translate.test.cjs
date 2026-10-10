@@ -22,12 +22,12 @@ function withoutNumbers(component) {
   const result = { ...component, parts: component.parts.slice(1) }; delete result[api.PARAGRAPH_ID]; return result;
 }
 function assertOriginals(result, expected) { assert.deepEqual(originals(result).map(withoutNumbers), expected.components); }
-async function execute({ story = fixture(), url = REQUEST_URL, method = 'GET', status = 200, body = JSON.stringify(story), contentType = 'application/json', argument = '{}', get } = {}) {
+async function execute({ story = fixture(), url = REQUEST_URL, method = 'GET', status = 200, body = JSON.stringify(story), contentType = 'application/json', argument = '{"provider":"google"}', get, post } = {}) {
   let result, called = 0, resolveDone;
   const done = new Promise(resolve => { resolveDone = resolve; });
   const requests = [], timers = [], logs = [];
   vm.runInNewContext(source, {
-    console: { log(value) { logs.push(value); } }, setTimeout(callback) { timers.push(callback); },
+    console: { log(value) { logs.push(value); } }, setTimeout(callback, ms) { if (ms <= 1200) return setTimeout(callback, ms); timers.push(callback); },
     $request: { url, method, headers: { Cookie: 'SECRET_COOKIE', Authorization: 'SECRET_AUTH' } },
     $response: { status, body, headers: { 'Content-Type': contentType, 'Content-Encoding': 'gzip', 'Content-Length': '100', ETag: 'old', 'Cache-Control': 'public', 'X-Other': 'keep' } }, $argument: argument,
     $persistentStore: new Proxy({}, { get() { throw Error('Forbidden storage'); } }),
@@ -36,7 +36,7 @@ async function execute({ story = fixture(), url = REQUEST_URL, method = 'GET', s
       if (get) return get(options, callback);
       const q = new URL(options.url).searchParams.get('q');
       callback(null, { status: 200 }, JSON.stringify([[...ids(q).map(id => [api.marker(id) + '中文段落' + id + '。', 'original'])], null, 'en']));
-    } },
+    }, post(options, callback) { requests.push(options); if (post) post(options, callback); else throw Error('Unexpected POST'); } },
     $done(value) { called++; result = value; resolveDone(); },
   }, { timeout: 2000 });
   await done; assert.equal(called, 1);
@@ -174,7 +174,7 @@ test('Google parser joins sentence fragments and keeps paragraph markers', () =>
   for (const body of ['<html>blocked</html>', '{}', '[[]]', '[[[null]]]', '[[["English only"]]]']) assert.throws(() => api.parseTranslation(body));
 });
 test('runtime sends only numbered body text to Google and completes exactly once', async () => {
-  const { result, requests, logs } = await execute({ argument: '{"debug":true}' });
+  const { result, requests, logs } = await execute({ argument: '{"provider":"google","debug":true}' });
   assert.equal(requests.length, 2); assertOriginals(JSON.parse(result.body), fixture());
   for (const request of requests) {
     const target = new URL(request.url); assert.equal(target.origin, 'https://translate.googleapis.com');
@@ -202,7 +202,7 @@ test('unrelated routes, invalid JSON/options and disabled translation pass throu
     const { result, requests } = await execute(options); assert.equal(Object.keys(result).length, 0); assert.equal(requests.length, 0);
   }
 });
-test('module scope, Google-only settings, pinned URL and parameter rendering remain valid', () => {
+test('module scope, Baidu credentials, pinned URL and parameter rendering remain valid', () => {
   const text = fs.readFileSync(path.join(__dirname, '../Bloomberg.Translate.sgmodule'), 'utf8');
   assert.equal(/AI地址|AIToken|AI模型|智谱密钥/.test(text), false);
   const line = text.split('\n').find(line => line.startsWith('nickcxm.'));
@@ -211,7 +211,7 @@ test('module scope, Google-only settings, pinned URL and parameter rendering rem
   assert.match(line, /script-path=https:\/\/raw\.githubusercontent\.com\/nickcxm\/script\/[a-f0-9]{40}\//);
   const values = Object.fromEntries(text.match(/^#!arguments=(.*)$/m)[1].split(',').map(item => item.split(':')));
   const argument = line.match(/argument="(.*)"$/)[1].replace(/\{\{\{(.*?)\}\}\}/g, (_, name) => values[name]);
-  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false });
+  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: '', baiduKey: '' });
 });
 
 
@@ -232,4 +232,92 @@ test('mixed bracket forms map independently and normalized duplicate ids merge s
   assert.equal(output.mode, 'exact'); assert.deepEqual(output.pieces.map(piece => piece.ids), [[1], [2], [3]]);
   const duplicate = api.alignTranslation('[1]第一段。【１】重复。', [1, 2]);
   assert.equal(duplicate.mode, 'merged'); assert.deepEqual(duplicate.pieces[0].ids, [1, 2]);
+});
+
+
+test('local MD5 matches standard UTF-8 digests and Baidu documented sign vector', () => {
+  const crypto = require('node:crypto');
+  for (const value of ['', 'abc', 'hello', '【1】The company’s profit grew 😀', 'a'.repeat(5000)]) {
+    assert.equal(api.md5(value), crypto.createHash('md5').update(value,'utf8').digest('hex'));
+  }
+  assert.equal(api.md5('2015063000000001apple654781234567890'), 'a1a7461d92e5194c5cae3182b5b24de1');
+});
+test('Baidu signs original UTF-8 query before form encoding and never sends the secret', () => {
+  const params = { baiduAppId: '2015063000000001', baiduKey: 'TEST_BAIDU_SECRET' };
+  const query = '【1】A + B & C’s profits 😀';
+  const request = api.baiduRequest(query, params, 4500, '65478');
+  assert.equal(request.url, 'https://fanyi-api.baidu.com/api/trans/vip/translate');
+  const form = new URLSearchParams(request.body);
+  assert.equal(form.get('q'), query); assert.equal(form.get('appid'), params.baiduAppId);
+  assert.equal(form.get('sign'), require('node:crypto').createHash('md5').update(params.baiduAppId+query+'65478'+params.baiduKey).digest('hex'));
+  assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.equal(JSON.stringify(request).includes(params.baiduKey), false);
+  assert.equal(request['auto-cookie'], false); assert.equal(request['auto-redirect'], false);
+});
+test('Baidu response paragraphs preserve numbers and error messages are not trusted', () => {
+  assert.equal(api.parseBaidu('{"trans_result":[{"src":"[1]one","dst":"[1]第一段。"},{"src":"[2]two","dst":"【2】第二段。"}]}'), '[1]第一段。\n\n【2】第二段。');
+  for (const code of ['52003','54001','54003','54004','58003']) {
+    assert.throws(() => api.parseBaidu(JSON.stringify({error_code:code,error_msg:'SECRET_PRIVATE_SERVER_MESSAGE'})), error => error.baiduCode===code && !error.message.includes('SECRET'));
+  }
+  for (const body of ['{}','<html>bad</html>','{"trans_result":[{"dst":null}]}']) assert.throws(() => api.parseBaidu(body));
+});
+test('Baidu is default but missing credentials use Google with an in-article notice', async () => {
+  assert.equal(api.options('').provider, 'baidu');
+  const { result, requests } = await execute({ argument: '{}' });
+  assert.ok(requests.length > 0); assert.ok(requests.every(request => request.url.startsWith('https://translate.googleapis.com')));
+  const story = JSON.parse(result.body); assertOriginals(story, fixture());
+  assert.match(story.components[1].parts[0].text, /未配置百度 APP ID 或密钥.*Google 备用/);
+});
+test('Baidu succeeds without Google and original credentials never reach request headers or logs', async () => {
+  const params = { provider: 'baidu', baiduAppId: '2015063000000001', baiduKey: 'TEST_BAIDU_SECRET', debug: true };
+  const { result, requests, logs } = await execute({ argument: JSON.stringify(params), post(options, callback) {
+    const query = new URLSearchParams(options.body).get('q');
+    callback(null, { status:200 }, JSON.stringify({trans_result:ids(query).map(number => ({dst:'【'+number+'】百度中文。'}))}));
+  } });
+  assert.equal(requests.length,2); assert.ok(requests.every(request => request.url.startsWith('https://fanyi-api.baidu.com')));
+  assert.equal(JSON.stringify(requests).includes('TEST_BAIDU_SECRET'),false); assert.equal(JSON.stringify(requests).includes('SECRET_COOKIE'),false);
+  assert.equal(JSON.stringify(logs).includes('TEST_BAIDU_SECRET'),false); assertOriginals(JSON.parse(result.body),fixture());
+  assert.equal(JSON.parse(result.body).components.some(item => item[api.INFO_MARKER]),false);
+});
+test('Baidu authentication failure disables subsequent primary attempts and safely uses Google', async () => {
+  const { result, requests } = await execute({ argument: JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_BAIDU_SECRET'}), post(_,cb) {
+    cb(null,{status:200},'{"error_code":"54001","error_msg":"SECRET_PRIVATE_SERVER_MESSAGE"}');
+  } });
+  assert.equal(requests.filter(request=>request.url.startsWith('https://fanyi-api.baidu.com')).length,1);
+  assert.equal(requests.filter(request=>request.url.startsWith('https://translate.googleapis.com')).length,2);
+  const story=JSON.parse(result.body); assertOriginals(story,fixture());
+  assert.match(story.components[1].parts[0].text,/百度签名错误.*Google 备用/);
+  assert.equal(result.body.includes('SECRET_PRIVATE_SERVER_MESSAGE'),false); assert.equal(result.body.includes('TEST_BAIDU_SECRET'),false);
+});
+test('Baidu scheduling spaces request starts and does not postpone forever', async () => {
+  let now=0;const started=[];
+  const schedule=(callback,ms)=>{ if(ms>1200)return; now+=ms;callback(); };
+  const transport=api.baiduTransport({post(_,cb){started.push(now);cb(null,{status:200},'{"trans_result":[{"dst":"【1】中文。"}]}');}},
+    {baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'},schedule,()=>now);
+  await transport('【1】First.',4500);await transport('【1】Second.',4500);await transport('【1】Third.',4500);
+  assert.deepEqual(started,[0,api.BAIDU_INTERVAL_MS,api.BAIDU_INTERVAL_MS*2]);
+});
+test('fallback never passes primary credentials to Google and retains remaining deadline', async () => {
+  let calls=0,remaining=0;
+  const translate=api.primaryWithFallback(async()=>{throw Object.assign(Error('failure'),{code:'baidu',baiduCode:'54003'});},async(text,ms)=>{calls++;remaining=ms;return '备用中文。';},()=>{});
+  assert.equal(await translate('【1】English.',7000),'备用中文。');assert.equal(calls,1);assert.ok(remaining>0&&remaining<=7000);
+});
+
+
+test('Google backup concurrency is limited independently of Baidu workers', async () => {
+  let active=0,peak=0;
+  const translate=api.limitConcurrency(async()=>{active++;peak=Math.max(peak,active);await new Promise(resolve=>setTimeout(resolve,2));active--;return '备用中文。';},3);
+  const results=await Promise.all(Array.from({length:12},()=>translate('正文',1000)));
+  assert.equal(peak,3);assert.equal(results.length,12);
+});
+test('Baidu byte limits reject oversized UTF-8 input before any network operation', () => {
+  const params={baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'};
+  assert.throws(()=>api.baiduRequest('😀'.repeat(1600),params,4500),error=>error.baiduCode==='length');
+});
+test('service network failures stop new Baidu calls and both failures retain original text', async () => {
+  const {result,requests}=await execute({argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),
+    post(_,cb){cb('private failure',null,null);},get(_,cb){cb('private failure',null,null);}});
+  assert.equal(requests.filter(request=>request.url.startsWith('https://fanyi-api.baidu.com')).length,1);
+  const story=JSON.parse(result.body);assertOriginals(story,fixture());assert.equal(story.components.some(item=>item[api.TRANSLATION_MARKER]),false);
+  assert.match(story.components[1].parts[0].text,/百度翻译网络请求失败.*Google 备用/);
 });
