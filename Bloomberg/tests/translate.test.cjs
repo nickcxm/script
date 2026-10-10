@@ -278,8 +278,7 @@ test('Baidu succeeds without Google and original credentials never reach request
   assert.equal(requests.length,1); assert.ok(requests.every(request => request.url.startsWith('https://fanyi-api.baidu.com')));
   assert.equal(JSON.stringify(requests).includes('TEST_BAIDU_SECRET'),false); assert.equal(JSON.stringify(requests).includes('SECRET_COOKIE'),false);
   assert.equal(JSON.stringify(logs).includes('TEST_BAIDU_SECRET'),false); assertOriginals(JSON.parse(result.body),fixture());
-  assert.equal(JSON.parse(result.body).components.filter(item => item[api.INFO_MARKER] === 'provider').length,1);
-  assert.equal(JSON.parse(result.body).components[1].parts[0].text,'翻译服务：百度');
+  assert.equal(JSON.parse(result.body).components.filter(item => item[api.INFO_MARKER]).length,0);
 });
 test('Baidu authentication failure disables subsequent primary attempts and safely uses Google', async () => {
   const { result, requests } = await execute({ argument: JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_BAIDU_SECRET'}), post(_,cb) {
@@ -452,4 +451,14 @@ test('Baidu transport has at most one request in flight even when callers start 
   }},{baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'},schedule);
   const results=await Promise.all(Array.from({length:6},(_,i)=>transport('【'+(i+1)+'】English.',4500)));
   assert.equal(peak,1);assert.equal(active,0);assert.equal(calls,6);assert.equal(results.length,6);
+});
+
+
+test('cached Baidu output removes an old provider annotation without adding a new one', async () => {
+  const original=fixture();
+  const first=await api.translateStory(original,translated,{provider:'baidu',removeAdConfig:true});
+  first.story.components.splice(1,0,{role:'p',[api.INFO_MARKER]:'provider',parts:[{role:'text',text:'翻译服务：百度'}]});
+  const {result,requests}=await execute({story:first.story,argument:JSON.stringify({provider:'baidu',baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'})});
+  assert.equal(requests.length,0);const output=JSON.parse(result.body);
+  assert.equal(output.components.some(item=>item[api.INFO_MARKER]),false);assertOriginals(output,original);
 });

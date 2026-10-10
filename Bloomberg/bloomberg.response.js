@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-serial-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-google-notice-only-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-baidu-serial-1';
+  const VERSION = '20261010-google-notice-only-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -601,9 +601,11 @@
           else provider = '已有译文（本次未调用翻译接口）';
           if (fallbackReasons.size) notices.unshift('翻译提示：' + Array.from(fallbackReasons).join(' ') + ' 已尝试使用 Google 备用；未成功的内容保留原文。');
           const first = output.story.components.findIndex(item => item?.role === 'p' && !isTranslation(item));
-          if (first !== -1) {
-            output.story.components.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: 'provider',
-              parts: [{ role: 'text', text: '翻译服务：' + provider + (notices.length ? '\n' + notices.join('\n') : '') }] });
+          const showProvider = providerSuccess.google > 0 || fallbackCount > 0 || (params.provider === 'google' && output.stats.requests > 0);
+          if (first !== -1 && (showProvider || notices.length)) {
+            const text = (showProvider ? '翻译服务：' + provider : '') +
+              (notices.length ? (showProvider ? '\n' : '') + notices.join('\n') : '');
+            output.story.components.splice(first + 1, 0, { role: 'p', [INFO_MARKER]: showProvider ? 'provider' : 'notice', parts: [{ role: 'text', text }] });
             output.changed = true;
           }
           output.stats.provider = params.provider; output.stats.googleFallbacks = fallbackCount;
