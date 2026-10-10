@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-error-details-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-baidu-batch-2000-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-baidu-error-details-1';
+  const VERSION = '20261010-baidu-batch-2000-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -56,14 +56,20 @@
       (component[TRANSLATION_MARKER] === true || component.parts[0].text.startsWith(LEGACY_PREFIX));
   }
 
-  function splitText(text, limit = CHUNK_SIZE) {
+  function splitText(text, limit = CHUNK_SIZE, byteLimit = Infinity) {
     // Prefer sentence/space boundaries; retain every source character.
     // Array.from avoids splitting UTF-16 surrogate pairs in long paragraphs.
     const characters = Array.from(text);
     const chunks = [];
     let position = 0;
     while (position < characters.length) {
-      let end = Math.min(position + limit, characters.length);
+      let end = position, bytes = 0;
+      while (end < characters.length && end - position < limit) {
+        const code = characters[end].codePointAt(0), size = code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+        if (bytes + size > byteLimit) break;
+        bytes += size; end++;
+      }
+      if (end === position) throw new Error('Invalid chunk byte limit');
       if (end < characters.length) {
         for (let i = end - 1; i > position + limit / 2; i--) {
           if (/\s/.test(characters[i])) { end = i + 1; break; }
@@ -188,7 +194,7 @@
     return message.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
   }
 
-  function parseBaidu(body, params = {}) {
+  function parseBaidu(body, params = {}, query = null) {
     let response;
     try { response = JSON.parse(body); } catch (_) { throw Object.assign(new Error('invalid Baidu JSON'), { code: 'baidu', baiduCode: 'response' }); }
     if (response.error_code && String(response.error_code) !== '52000') {
@@ -198,6 +204,28 @@
     if (!Array.isArray(response.trans_result) || !response.trans_result.length ||
         response.trans_result.some(item => typeof item?.dst !== 'string' || !item.dst.trim())) {
       throw Object.assign(new Error('invalid Baidu result'), { code: 'baidu', baiduCode: 'response' });
+    }
+    // Prefer numbers in src: Baidu may translate or remove the marker in dst.
+    // Keep the old dst-based best-effort path if src is absent or ambiguous.
+    if (typeof query === 'string' && response.trans_result.every(item => typeof item.src === 'string')) {
+      const expected = new Set(Array.from(query.matchAll(new RegExp(MARKERS.source, 'g'))).map(item => markerNumber(item[1])));
+      const groups = new Map();
+      let current = null, usable = true;
+      for (const item of response.trans_result) {
+        const sourceMarkers = Array.from(item.src.matchAll(new RegExp(MARKERS.source, 'g')));
+        if (sourceMarkers.length) {
+          if (sourceMarkers.length !== 1 || item.src.slice(0, sourceMarkers[0].index).trim() || !expected.has(markerNumber(sourceMarkers[0][1]))) { usable = false; break; }
+          current = markerNumber(sourceMarkers[0][1]);
+        }
+        if (current === null) { usable = false; break; }
+        let dst = item.dst.trim();
+        const leading = new RegExp('^\\s*' + MARKERS.source).exec(dst);
+        if (leading) dst = dst.slice(leading[0].length).trim();
+        if (!dst) { usable = false; break; }
+        if (!groups.has(current)) groups.set(current, []);
+        groups.get(current).push(dst);
+      }
+      if (usable && groups.size) return Array.from(groups, ([id, pieces]) => marker(id) + pieces.join('')).join('\n\n');
     }
     return response.trans_result.map(item => item.dst).join('\n\n').trim();
   }
@@ -236,12 +264,12 @@
             if (error) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); return; }
             const status = Number(response?.status ?? response?.statusCode);
             if (status !== 200) {
-              try { parseBaidu(body, params); } catch (error) {
+              try { parseBaidu(body, params, text); } catch (error) {
                 if (/^\d+$/.test(error.baiduCode || '')) { error.httpStatus = status; finish(error); return; }
               }
               finish(Object.assign(new Error('Baidu HTTP failure'), { code: 'http', status: status || 0 })); return;
             }
-            try { finish(null, parseBaidu(body, params)); } catch (error) { finish(error); }
+            try { finish(null, parseBaidu(body, params, text)); } catch (error) { finish(error); }
           });
         } catch (_) { finish(Object.assign(new Error('Baidu network failure'), { code: 'network' })); }
       });
@@ -392,36 +420,52 @@
     }
     const deadline = clock() + TOTAL_TIMEOUT_MS;
     const tasks = [];
+    const baiduBatch = params.provider === 'baidu';
+    const chunkLimit = baiduBatch ? 2000 : CHUNK_SIZE;
+    const byteLimit = baiduBatch ? 5800 : Infinity;
+    const separator = baiduBatch ? '\n' : '\n\n';
     const errors = new Set();
     let batch = [];
-    let batchSize = 0;
+    let batchSize = 0, batchBytes = 0;
     let reserved = 0;
+    if (baiduBatch && !story._nickcxmTitleTranslated && typeof story.title === 'string' && story.title.trim()) {
+      const title = story.title.trim().replace(/[\r\n]+/g, ' ');
+      const entry = { id: 0, index: -1, source: title };
+      const marked = marker(0) + title;
+      if (Array.from(marked).length <= chunkLimit && utf8Bytes(marked).length <= byteLimit) {
+        entries.set(0, entry); batch.push(entry); batchSize = Array.from(marked).length; batchBytes = utf8Bytes(marked).length;
+      }
+    }
     function enqueue(task) {
       const size = task.chunks.length;
       if (reserved + size > MAX_REQUESTS) { errors.add(readableError({ code: 'limit' })); return; }
       reserved += size; tasks.push(task);
     }
     function flush() {
-      if (batch.length) enqueue({ entries: batch, chunks: [batch.map(entry => marker(entry.id) + entry.source).join('\n\n')], long: false });
-      batch = []; batchSize = 0;
+      if (batch.length) enqueue({ entries: batch, chunks: [batch.map(entry => marker(entry.id) + entry.source).join(separator)], long: false });
+      batch = []; batchSize = 0; batchBytes = 0;
     }
     for (let index = 0; index < components.length; index++) {
       const component = components[index];
-      if (component?.role !== 'p' || isTranslation(component) || covered.has(component[PARAGRAPH_ID])) { flush(); continue; }
+      if (component?.role !== 'p' || isTranslation(component) || covered.has(component[PARAGRAPH_ID])) { if (!baiduBatch) flush(); continue; }
       const entry = entries.get(component[PARAGRAPH_ID]);
       try {
         const parts = component.parts.slice(1); // Skip our visible source number.
         entry.source = extractText(parts).trim();
+        if (baiduBatch) entry.source = entry.source.replace(/[\r\n]+/g, ' ');
       } catch (_) { flush(); errors.add(readableError(null)); continue; }
       if (!entry.source || !/[A-Za-z]/.test(entry.source)) { flush(); continue; }
-      const length = Array.from(marker(entry.id) + entry.source).length;
-      if (length > CHUNK_SIZE) {
+      const marked = marker(entry.id) + entry.source;
+      const length = Array.from(marked).length, bytes = baiduBatch ? utf8Bytes(marked).length : 0;
+      if (length > chunkLimit || bytes > byteLimit) {
         flush();
-        enqueue({ entries: [entry], chunks: splitText(entry.source, CHUNK_SIZE - 32).map(chunk => marker(entry.id) + chunk), long: true });
+        enqueue({ entries: [entry], chunks: splitText(entry.source, chunkLimit - 32, byteLimit - 32).map(chunk => marker(entry.id) + chunk), long: true });
         continue;
       }
-      if (batch.length && batchSize + 2 + length > CHUNK_SIZE) flush();
-      batchSize += (batch.length ? 2 : 0) + length;
+      const gap = batch.length ? separator.length : 0;
+      if (batch.length && (batchSize + gap + length > chunkLimit || batchBytes + gap + bytes > byteLimit)) flush();
+      batchSize += (batch.length ? separator.length : 0) + length;
+      batchBytes += (batch.length ? separator.length : 0) + bytes;
       batch.push(entry);
     }
     flush();
@@ -471,14 +515,16 @@
         parts: [{ role: 'text', text: '翻译提示：' + Array.from(errors).join(' ') + ' 未成功的正文保留原文。' }] });
     }
     const result = { ...story, components: output };
+    const titlePiece = placements.find(item => item.piece.ids.length === 1 && item.piece.ids[0] === 0)?.piece;
+    if (titlePiece) { result.title = story.title + '\n' + titlePiece.text; result._nickcxmTitleTranslated = true; }
     let adConfigChanged = false;
     if (params.removeAdConfig) {
       if (Object.prototype.hasOwnProperty.call(result, 'adParams')) { delete result.adParams; adConfigChanged = true; }
       if (typeof result.disableAds === 'boolean' && !result.disableAds) { result.disableAds = true; adConfigChanged = true; }
     }
     return { story: result, changed: JSON.stringify(result) !== before,
-      stats: { paragraphs: tasks.reduce((sum, task) => sum + task.entries.length, 0), batches: tasks.length,
-        translated: placements.reduce((sum, item) => sum + item.piece.ids.length, 0), translatedBlocks: placements.length,
+      stats: { paragraphs: tasks.reduce((sum, task) => sum + task.entries.filter(entry => entry.id > 0).length, 0), batches: tasks.length,
+        translated: placements.reduce((sum, item) => sum + item.piece.ids.filter(id => id > 0).length, 0), translatedBlocks: placements.filter(item => item.index >= 0).length, titleTranslated: Boolean(titlePiece),
         requests, failed, modes, adConfigChanged, version: VERSION } };
   }
 
@@ -508,9 +554,41 @@
             const value = await translate(text, timeoutMs); providerSuccess[name]++; return value;
           };
           const google = countSuccess('google', limitConcurrency(googleTransport($httpClient), CONCURRENCY));
+          const googleBackup = async (text, timeoutMs) => {
+            const start = Date.now();
+            const parts = text.split(/\n+(?=【\d+】)/);
+            const chunks = []; let pending = '', pendingSize = 0;
+            for (const part of parts) {
+              const size = Array.from(part).length;
+              if (size > CHUNK_SIZE) {
+                if (pending) chunks.push(pending); pending = ''; pendingSize = 0;
+                const head = /^【\d+】/.exec(part)?.[0] || '';
+                chunks.push(...splitText(part.slice(head.length), CHUNK_SIZE - head.length).map(chunk => head + chunk)); continue;
+              }
+              if (pending && pendingSize + 2 + size > CHUNK_SIZE) { chunks.push(pending); pending = ''; pendingSize = 0; }
+              pendingSize += (pending ? 2 : 0) + size; pending += (pending ? '\n\n' : '') + part;
+            }
+            if (pending) chunks.push(pending);
+            const results = [], aligned = [];
+            for (const chunk of chunks) {
+              const remaining = timeoutMs - (Date.now() - start);
+              if (remaining <= 0) throw Object.assign(new Error('Fallback timeout'), { code: 'timeout' });
+              const value = await google(chunk, remaining); results.push(value);
+              const ids = Array.from(new Set(Array.from(chunk.matchAll(new RegExp(MARKERS.source, 'g'))).map(item => markerNumber(item[1]))));
+              aligned.push(alignTranslation(value, ids));
+            }
+            if (aligned.every(item => item.mode === 'exact')) {
+              const grouped = new Map();
+              for (const item of aligned) for (const piece of item.pieces) {
+                const id = piece.ids[0]; if (!grouped.has(id)) grouped.set(id, []); grouped.get(id).push(piece.text);
+              }
+              return Array.from(grouped, ([id, pieces]) => marker(id) + pieces.join('')).join('\n\n');
+            }
+            return results.join('\n\n');
+          };
           const fallbackReasons = new Set();
           let fallbackCount = 0;
-          const translate = params.provider === 'baidu' ? primaryWithFallback(countSuccess('baidu', baiduTransport($httpClient, params)), google, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
+          const translate = params.provider === 'baidu' ? primaryWithFallback(countSuccess('baidu', baiduTransport($httpClient, params)), googleBackup, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
           const output = await translateStory(original, translate, { ...params, workerConcurrency: params.provider === 'baidu' ? 6 : CONCURRENCY });
           const notices = output.story.components.filter(item => item?.[INFO_MARKER] === 'notice').map(item => item.parts?.[0]?.text).filter(Boolean);
           output.story.components = output.story.components.filter(item => !item?.[INFO_MARKER]);

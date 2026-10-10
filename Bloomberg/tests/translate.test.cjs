@@ -7,6 +7,7 @@ const path = require('node:path');
 const api = require('../bloomberg.response.js');
 const source = fs.readFileSync(path.join(__dirname, '../bloomberg.response.js'), 'utf8');
 const REQUEST_URL = 'https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/TMM9Y6T3BZM200?updatedAt=test';
+function googleStory(story, translate, params = {}, clock) { return api.translateStory(story, translate, { removeAdConfig: true, ...params, provider: 'google' }, clock); }
 const p = text => ({ role: 'p', parts: [{ role: 'text', text }] });
 function fixture() {
   return { title: 'Untouched title', aiSummary: ['Untouched summary'], premium: true, isMetered: true, disableAds: false, adParams: { dfpTarget: { key: 'keep private' } },
@@ -56,7 +57,7 @@ test('invalid and excessive nesting are rejected', () => {
 });
 test('complete markers map one Chinese paragraph after each numbered original', async () => {
   const original = fixture(), snapshot = JSON.stringify(original), sent = [];
-  const output = await api.translateStory(original, async text => { sent.push(text); return translated(text); });
+  const output = await googleStory(original, async text => { sent.push(text); return translated(text); });
   assert.equal(JSON.stringify(original), snapshot); assertOriginals(output.story, original);
   assert.equal(sent.length, 2); assert.deepEqual(ids(sent[0]), [1, 2]); assert.deepEqual(ids(sent[1]), [3]);
   assert.ok(sent[0].includes('Read more here.')); assert.equal(sent.some(text => text.includes('DO NOT SEND')), false);
@@ -96,7 +97,7 @@ for (const [name, value] of [
 }
 test('fallback display does not lose successfully translated batches or move images', async () => {
   const original = fixture();
-  const output = await api.translateStory(original, async () => '整批中文译文。');
+  const output = await googleStory(original, async () => '整批中文译文。');
   assertOriginals(output.story, original);
   assert.equal(output.story.components[2].parts[0].text, api.marker(1) + api.marker(2) + '\n整批中文译文。');
   assert.equal(output.story.components[3].role, 'image'); assert.equal(output.stats.modes.merged, 2);
@@ -105,18 +106,18 @@ test('fallback display does not lose successfully translated batches or move ima
 test('images, related reading, headings and unknown roles all separate request batches', async () => {
   const separators = [{ role: 'image' }, { role: 'webview' }, { role: 'heading' }, { role: 'unknown' }];
   const original = { components: separators.flatMap((separator, i) => [p('Body A ' + i), p('Body B ' + i), separator]) };
-  const sent = []; const output = await api.translateStory(original, async text => { sent.push(ids(text)); return translated(text); });
+  const sent = []; const output = await googleStory(original, async text => { sent.push(ids(text)); return translated(text); });
   assert.deepEqual(sent, [[1, 2], [3, 4], [5, 6], [7, 8]]); assertOriginals(output.story, original);
 });
 test('complete numbered paragraphs are packed without cutting markers or paragraph boundaries', async () => {
   const original = { components: [p('First sentence. '.repeat(45)), p('Second sentence. '.repeat(45)), p('Third paragraph.')] };
-  const sent = []; const output = await api.translateStory(original, async text => { sent.push(text); return translated(text); });
+  const sent = []; const output = await googleStory(original, async text => { sent.push(text); return translated(text); });
   assert.equal(sent.length, 2); assert.deepEqual(sent.map(ids), [[1], [2, 3]]);
   assert.ok(sent.every(text => Array.from(text).length <= 1200)); assert.equal(output.stats.translated, 3);
 });
 test('long paragraph fragments reuse its number and recombine after the same original', async () => {
   const original = { components: [p('Long text with emoji 😀. '.repeat(140))] };
-  const sent = []; const output = await api.translateStory(original, async text => { sent.push(ids(text)); return translated(text); });
+  const sent = []; const output = await googleStory(original, async text => { sent.push(ids(text)); return translated(text); });
   assert.ok(sent.length > 1); assert.ok(sent.every(value => value.length === 1 && value[0] === 1));
   assert.equal(output.story.components.filter(item => item[api.TRANSLATION_MARKER]).length, 1);
   assertOriginals(output.story, original);
@@ -124,49 +125,49 @@ test('long paragraph fragments reuse its number and recombine after the same ori
 });
 test('a failed long fragment keeps the numbered original and reports the error', async () => {
   const original = { components: [p('Long paragraph. '.repeat(160))] }; let requests = 0;
-  const output = await api.translateStory(original, async text => { if (++requests === 2) throw Error('failure'); return translated(text); });
+  const output = await googleStory(original, async text => { if (++requests === 2) throw Error('failure'); return translated(text); });
   assertOriginals(output.story, original); assert.equal(output.story.components.some(item => item[api.TRANSLATION_MARKER]), false);
   assert.equal(output.story.components[1][api.INFO_MARKER], 'notice');
 });
 test('numbered source and exact/partial/merged translations remain idempotent', async () => {
   for (const translate of [translated, async () => '合并译文。', async text => api.marker(ids(text)[0]) + '部分编号译文。']) {
-    const first = await api.translateStory(fixture(), translate); let calls = 0;
-    const second = await api.translateStory(first.story, async () => { calls++; return '不应调用'; });
+    const first = await googleStory(fixture(), translate); let calls = 0;
+    const second = await googleStory(first.story, async () => { calls++; return '不应调用'; });
     assert.equal(calls, 0); assert.equal(second.changed, false); assert.deepEqual(second.story, first.story);
   }
 });
 test('old visible labels are removed and previous grouped translations retain source numbers', async () => {
   const old = { components: [p('First original.'), p('Second original.'),
     { role: 'p', [api.TRANSLATION_MARKER]: true, [api.SOURCE_COUNT]: 2, parts: [{ role: 'text', text: '【中文译文】\n旧版中文。\n\n（翻译：谷歌）' }] }] };
-  const output = await api.translateStory(old, async () => { throw Error('should not translate'); });
+  const output = await googleStory(old, async () => { throw Error('should not translate'); });
   const chinese = output.story.components[2]; assert.deepEqual(chinese[api.SOURCE_IDS], [1, 2]);
   assert.equal(chinese.parts[0].text, api.marker(1) + api.marker(2) + '\n旧版中文。');
 });
 test('translation failure affects only its batch and old notices are not translated on retry', async () => {
   const original = fixture();
-  const first = await api.translateStory(original, async text => { if (ids(text)[0] === 1) throw Error('failure'); return translated(text); });
+  const first = await googleStory(original, async text => { if (ids(text)[0] === 1) throw Error('failure'); return translated(text); });
   assertOriginals(first.story, original); assert.equal(first.stats.translated, 1); assert.equal(first.story.components[1][api.INFO_MARKER], 'notice');
-  const sent = []; const second = await api.translateStory(first.story, async text => { sent.push(text); return translated(text); });
+  const sent = []; const second = await googleStory(first.story, async text => { sent.push(text); return translated(text); });
   assert.equal(sent.length, 1); assert.deepEqual(ids(sent[0]), [1, 2]); assert.equal(sent[0].includes('翻译提示'), false);
   assert.equal(second.story.components.some(item => item[api.INFO_MARKER]), false);
 });
 test('concurrency and total request count remain bounded', async () => {
   const original = { components: Array.from({ length: 100 }, (_, i) => [p('Paragraph ' + i), { role: 'image' }]).flat() };
   let active = 0, peak = 0, calls = 0;
-  const output = await api.translateStory(original, async text => { calls++; active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 1)); active--; return translated(text); });
+  const output = await googleStory(original, async text => { calls++; active++; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 1)); active--; return translated(text); });
   assert.equal(calls, 48); assert.equal(peak, 3); assert.equal(output.stats.requests, 48);
   assert.ok(output.story.components.some(item => item[api.INFO_MARKER]));
 });
 test('deadline stops queued requests without losing original text', async () => {
   let now = 0, calls = 0;
   const original = fixture();
-  const output = await api.translateStory(original, async text => { calls++; now += api.TOTAL_TIMEOUT_MS; return translated(text); }, { removeAdConfig: false }, () => now);
+  const output = await googleStory(original, async text => { calls++; now += api.TOTAL_TIMEOUT_MS; return translated(text); }, { removeAdConfig: false }, () => now);
   assert.equal(calls, 1); assertOriginals(output.story, original); assert.equal(output.stats.failed, 1);
 });
 test('ad removal is limited and switchable; metadata and non-body components are retained', async () => {
   const original = fixture();
-  const removed = await api.translateStory(original, translated); assert.equal('adParams' in removed.story, false); assert.equal(removed.story.disableAds, true);
-  const kept = await api.translateStory(original, translated, { removeAdConfig: false }); assert.deepEqual(kept.story.adParams, original.adParams); assert.equal(kept.story.disableAds, false);
+  const removed = await googleStory(original, translated); assert.equal('adParams' in removed.story, false); assert.equal(removed.story.disableAds, true);
+  const kept = await googleStory(original, translated, { removeAdConfig: false }); assert.deepEqual(kept.story.adParams, original.adParams); assert.equal(kept.story.disableAds, false);
   assertOriginals(removed.story, original);
 });
 test('Google parser joins sentence fragments and keeps paragraph markers', () => {
@@ -274,7 +275,7 @@ test('Baidu succeeds without Google and original credentials never reach request
     const query = new URLSearchParams(options.body).get('q');
     callback(null, { status:200 }, JSON.stringify({trans_result:ids(query).map(number => ({dst:'【'+number+'】百度中文。'}))}));
   } });
-  assert.equal(requests.length,2); assert.ok(requests.every(request => request.url.startsWith('https://fanyi-api.baidu.com')));
+  assert.equal(requests.length,1); assert.ok(requests.every(request => request.url.startsWith('https://fanyi-api.baidu.com')));
   assert.equal(JSON.stringify(requests).includes('TEST_BAIDU_SECRET'),false); assert.equal(JSON.stringify(requests).includes('SECRET_COOKIE'),false);
   assert.equal(JSON.stringify(logs).includes('TEST_BAIDU_SECRET'),false); assertOriginals(JSON.parse(result.body),fixture());
   assert.equal(JSON.parse(result.body).components.filter(item => item[api.INFO_MARKER] === 'provider').length,1);
@@ -285,7 +286,7 @@ test('Baidu authentication failure disables subsequent primary attempts and safe
     cb(null,{status:200},'{"error_code":"54001","error_msg":"SECRET_PRIVATE_SERVER_MESSAGE"}');
   } });
   assert.equal(requests.filter(request=>request.url.startsWith('https://fanyi-api.baidu.com')).length,1);
-  assert.equal(requests.filter(request=>request.url.startsWith('https://translate.googleapis.com')).length,2);
+  assert.equal(requests.filter(request=>request.url.startsWith('https://translate.googleapis.com')).length,1);
   const story=JSON.parse(result.body); assertOriginals(story,fixture());
   assert.match(story.components[1].parts[0].text,/百度签名错误.*Google 备用/);
   assert.equal(result.body.includes('SECRET_PRIVATE_SERVER_MESSAGE'),true); assert.equal(result.body.includes('TEST_BAIDU_SECRET'),false);
@@ -338,12 +339,13 @@ test('actual Google backup provider and error reason share the first-paragraph a
 });
 test('mixed successful primary and backup translations report both providers without per-block labels', async () => {
   let posts=0;
-  const {result}=await execute({argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(options,cb){
+  const mixed={components:[p('First long sentence. '.repeat(65)),{role:'image'},p('Second long sentence. '.repeat(65))]};
+  const {result}=await execute({story:mixed,argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(options,cb){
     if(++posts===1){const query=new URLSearchParams(options.body).get('q');cb(null,{status:200},JSON.stringify({trans_result:ids(query).map(id=>({dst:'【'+id+'】百度中文。'}))}));}
     else cb(null,{status:200},'{"error_code":"54003"}');
   }});
   const story=JSON.parse(result.body);assert.match(story.components[1].parts[0].text,/翻译服务：百度、Google/);
-  assert.equal(story.components.filter(item=>item[api.INFO_MARKER]).length,1);assertOriginals(story,fixture());
+  assert.equal(story.components.filter(item=>item[api.INFO_MARKER]).length,1);assertOriginals(story,mixed);
 });
 
 
@@ -377,4 +379,64 @@ test('raw and encoded credentials in provider messages are hidden before display
   assert.equal(result.body.includes(params.baiduKey),false);assert.equal(result.body.includes(encodeURIComponent(params.baiduKey)),false);assert.equal(result.body.includes(params.baiduAppId),false);
   assert.ok(result.body.includes('[已隐藏]'));assert.equal(JSON.stringify(logs).includes(params.baiduKey),false);
   assert.ok(api.safeBaiduMessage('x'.repeat(500)).length<=300);
+});
+
+
+test('Baidu under 2000 characters combines body across images and related reading into one request', async () => {
+  const original=fixture();const queries=[];
+  const output=await api.translateStory(original,async query=>{queries.push(query);return translated(query);},{provider:'baidu',removeAdConfig:true});
+  assert.equal(queries.length,1);assert.deepEqual(ids(queries[0]),[0,1,2,3]);
+  assert.ok(queries[0].startsWith('【0】'+original.title+'\n【1】'));assert.equal(queries[0].includes('\n\n'),false);
+  assertOriginals(output.story,original);assert.equal(output.story.title,original.title+'\n中文段落0。');
+  assert.equal(output.story._nickcxmTitleTranslated,true);assert.equal(output.stats.titleTranslated,true);assert.equal(output.stats.translated,3);
+  const titles=output.story.components.filter(item=>item[api.TRANSLATION_MARKER]&&item[api.SOURCE_IDS].includes(0));assert.equal(titles.length,0);
+  let repeated=0;const second=await api.translateStory(output.story,async()=>{repeated++;return '';},{provider:'baidu',removeAdConfig:true});
+  assert.equal(repeated,0);assert.equal(second.changed,false);assert.equal(second.story.title,output.story.title);
+});
+test('Baidu batches respect both 2000 code points and 5800 UTF-8 bytes', async () => {
+  const original={title:'Test title',components:[p('First paragraph. '.repeat(85)),{role:'image'},p('Second paragraph. '.repeat(85)),p('Third paragraph. '.repeat(50))]};
+  const queries=[];const output=await api.translateStory(original,async query=>{queries.push(query);return translated(query);},{provider:'baidu'});
+  assert.ok(queries.length>1);assert.ok(queries.every(query=>Array.from(query).length<=2000&&api.utf8Bytes(query).length<=5800));
+  assert.equal(output.stats.translated,3);assertOriginals(output.story,original);
+  const emoji=p('English '+ '😀'.repeat(1500));const parts=[];
+  const long=await api.translateStory({components:[emoji]},async query=>{parts.push(query);return translated(query);},{provider:'baidu'});
+  assert.ok(parts.every(query=>api.utf8Bytes(query).length<=5800));assert.equal(long.stats.translated,1);
+});
+test('Baidu uses src ids when dst markers are removed, changed, or incorrect', () => {
+  const query='【0】English title\n【1】First body.\n【2】Second body.';
+  const result=api.parseBaidu(JSON.stringify({trans_result:[
+    {src:'【0】English title',dst:'中文标题'},
+    {src:'【1】First body.',dst:'[99]第一段中文。'},
+    {src:'【2】Second body.',dst:'第二段中文。'},
+  ]}),{},query);
+  assert.equal(result,'【0】中文标题\n\n【1】第一段中文。\n\n【2】第二段中文。');
+  assert.equal(api.alignTranslation(result,[0,1,2]).mode,'exact');
+});
+test('Baidu source continuation rows stay with their original paragraph', () => {
+  const result=api.parseBaidu(JSON.stringify({trans_result:[{src:'【1】First.',dst:'第一句。'},{src:'Next sentence.',dst:'第二句。'},{src:'【2】Other.',dst:'另一段。'}]}),{},'【1】First. Next sentence.\n【2】Other.');
+  assert.equal(result,'【1】第一句。第二句。\n\n【2】另一段。');
+});
+test('Google-only requests do not translate title or merge across images', async () => {
+  const original=fixture();const sent=[];
+  const output=await api.translateStory(original,async query=>{sent.push(query);return translated(query);},{provider:'google'});
+  assert.equal(sent.length,2);assert.ok(sent.every(query=>!query.includes('【0】')));assert.equal(output.story.title,original.title);
+});
+test('large Baidu batches are repacked to 1200-character Google backup requests', async () => {
+  const original={title:'Example title',components:[p('A sentence about company earnings. '.repeat(24)),{role:'image'},p('Another company announced earnings. '.repeat(23))]};
+  const queries=[];
+  const {result,requests}=await execute({story:original,argument:JSON.stringify({baiduAppId:'2015063000000001',baiduKey:'TEST_KEY'}),post(_,cb){cb(null,{status:200},'{"error_code":"54003","error_msg":"Access Limit"}');},get(options,cb){
+    const query=new URL(options.url).searchParams.get('q');queries.push(query);
+    cb(null,{status:200},JSON.stringify([ids(query).map(id=>['【'+id+'】备用译文。','original'])]));
+  }});
+  assert.equal(requests.filter(request=>request.url.startsWith('https://fanyi-api.baidu.com')).length,1);
+  assert.ok(queries.length>1);assert.ok(queries.every(query=>Array.from(query).length<=1200));
+  const output=JSON.parse(result.body);assertOriginals(output,original);assert.equal(output.title,original.title+'\n备用译文。');
+});
+
+
+test('Google backup long fragments reassemble without duplicate paragraph numbers', async () => {
+  const original={title:'Title',components:[p('Long text about profits. '.repeat(70))]};
+  const {result}=await execute({story:original,argument:'{}'});
+  const output=JSON.parse(result.body);const translations=output.components.filter(item=>item[api.TRANSLATION_MARKER]);
+  assert.equal(translations.length,1);assert.deepEqual(ids(translations[0].parts[0].text),[1]);assertOriginals(output,original);
 });
