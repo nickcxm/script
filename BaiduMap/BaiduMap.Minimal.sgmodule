@@ -1,0 +1,12 @@
+#!name=百度地图精简实验版 @nickcxm
+#!desc=20261010-minimal-1：仅过滤已确认的两个组件更新接口，尝试减少首页推荐、Agent、金币商城和生活服务。保留搜索、通用详情、室内图、用户与Web框架、公交步行骑行依赖。无法保证隐藏内置或缓存入口。
+#!author=nickcxm
+#!homepage=https://github.com/nickcxm/script/tree/main/BaiduMap
+#!arguments=enabled:true,hide_feed:true,hide_ai:true,hide_local_services:true,hide_gold_mall:true,debug:false
+#!arguments-desc=参数填true/false。默认过滤非核心组件更新清单，App内置或已有组件仍可能显示。若功能异常先关闭模块，或逐组将hide_*设为false。仅处理bdmap云配置及components更新清单，不拦截整个接口、不删除本地数据、不改变账号权限。不应同时启用匹配这些接口的其他修改脚本。
+
+[Script]
+nickcxm.baidumap.minimal = type=http-response, pattern=^https:\/\/(mbd\.baidu\.com\/ccs\/v1\/start\/confsync|newclient\.map\.baidu\.com\/client\/imap\/dl\/s\/UpdateInfo\.php)(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=10, script-path=https://raw.githubusercontent.com/nickcxm/script/main/BaiduMap/baidumap.response.js, argument="{"enabled":{{{enabled}}},"hideFeed":{{{hide_feed}}},"hideAI":{{{hide_ai}}},"hideLocalServices":{{{hide_local_services}}},"hideGoldMall":{{{hide_gold_mall}}},"debug":{{{debug}}}}"
+
+[MITM]
+hostname = %APPEND% mbd.baidu.com, newclient.map.baidu.com
