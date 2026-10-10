@@ -1,5 +1,5 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-provider-once-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-module-args-fix-1.
  * Independently written against a user-provided story JSON response.
  * Only paragraph text is sent to the selected translation provider.
  * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
@@ -7,7 +7,7 @@
 (() => {
   'use strict';
 
-  const VERSION = '20261010-provider-once-1';
+  const VERSION = '20261010-module-args-fix-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -32,7 +32,9 @@
     for (const key of Object.keys(DEFAULTS)) if (typeof supplied[key] === 'boolean') result[key] = supplied[key];
     if (typeof supplied.provider === 'string') result.provider = supplied.provider.trim().toLowerCase();
     if (!['baidu', 'google'].includes(result.provider)) throw new Error('Invalid provider');
-    for (const key of ['baiduAppId', 'baiduKey']) if (typeof supplied[key] === 'string') result[key] = supplied[key].trim();
+    for (const key of ['baiduAppId', 'baiduKey']) if (typeof supplied[key] === 'string') {
+      const value = supplied[key].trim(); result[key] = value === 'UNSET' ? '' : value;
+    }
     return result;
   }
 

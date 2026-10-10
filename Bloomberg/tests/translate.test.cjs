@@ -211,7 +211,7 @@ test('module scope, Baidu credentials, pinned URL and parameter rendering remain
   assert.match(line, /script-path=https:\/\/raw\.githubusercontent\.com\/nickcxm\/script\/[a-f0-9]{40}\//);
   const values = Object.fromEntries(text.match(/^#!arguments=(.*)$/m)[1].split(',').map(item => item.split(':')));
   const argument = line.match(/argument="(.*)"$/)[1].replace(/\{\{\{(.*?)\}\}\}/g, (_, name) => values[name]);
-  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: '', baiduKey: '' });
+  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: 'UNSET', baiduKey: 'UNSET' });
 });
 
 
@@ -344,4 +344,17 @@ test('mixed successful primary and backup translations report both providers wit
   }});
   const story=JSON.parse(result.body);assert.match(story.components[1].parts[0].text,/翻译服务：百度、Google/);
   assert.equal(story.components.filter(item=>item[api.INFO_MARKER]).length,1);assertOriginals(story,fixture());
+});
+
+
+test('module parameters have portable names and non-empty defaults', () => {
+  const text=fs.readFileSync(path.join(__dirname,'../Bloomberg.Translate.sgmodule'),'utf8');
+  const declarations=text.match(/^#!arguments=(.*)$/m)[1].split(',');
+  const names=new Set();
+  for(const item of declarations){
+    const index=item.indexOf(':');assert.ok(index>0&&index<item.length-1);
+    const name=item.slice(0,index);assert.match(name,/^[A-Za-z0-9_]+$/);assert.equal(names.has(name),false);names.add(name);
+  }
+  for(const [,name] of text.matchAll(/\{\{\{([^}]+)\}\}\}/g))assert.ok(names.has(name));
+  assert.deepEqual(api.options({baiduAppId:'UNSET',baiduKey:'UNSET'}),api.options(''));
 });

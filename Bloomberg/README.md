@@ -58,11 +58,13 @@ App 缓存/离线文章可能不发请求。更新后完全退出 App，打开�
 
 ## 百度高级版配置
 
+模块参数使用英文名称和非空默认值，避免头部参数解析失败。`UNSET` 表示未配置。更新后需重新填写 `baidu_appid` 和 `baidu_key`；旧中文参数名称不会自动迁移。
+
 安装后在 Surge 模块参数中填写：
 
-- **翻译服务**：`baidu`（默认）；改为 `google` 可直接使用 Google。
-- **百度APPID**：开发者信息页面的 APP ID。
-- **百度密钥**：同一应用对应的密钥，不是智能云的 API Key/Secret Key。
+- **provider**：`baidu`（默认）；改为 `google` 可直接使用 Google。
+- **baidu_appid**：开发者信息页面的 APP ID。
+- **baidu_key**：同一应用对应的密钥，不是智能云的 API Key/Secret Key。
 
 接入用户提供的通用文本翻译接口：
 
@@ -89,12 +91,12 @@ Content-Type: application/x-www-form-urlencoded
 
 | 参数 | 默认 | 行为 |
 | --- | --- | --- |
-| 启用翻译 | `true` | 关闭后完全放行原响应 |
-| 翻译服务 | `baidu` | 百度优先、Google 备用；`google` 直接使用 Google |
-| 百度APPID | 空 | 百度开发者应用 APP ID |
-| 百度密钥 | 空 | 对应应用的密钥，仅用于本地签名 |
-| 去除广告配置 | `true` | 删除 `adParams`，已有 `disableAds` 布尔字段设为 true |
-| 调试日志 | `false` | 输出匹配统计、请求数量和版本；不输出正文或凭证 |
+| enabled | `true` | 关闭后完全放行原响应 |
+| provider | `baidu` | 百度优先、Google 备用；`google` 直接使用 Google |
+| baidu_appid | `UNSET` | 百度开发者应用 APP ID |
+| baidu_key | `UNSET` | 对应应用的密钥，仅用于本地签名 |
+| remove_ad_config | `true` | 删除 `adParams`，已有 `disableAds` 布尔字段设为 true |
+| debug | `false` | 输出匹配统计、请求数量和版本；不输出正文或凭证 |
 
 主备请求均失败时保留编号原文，在第一段后追加错误提示，例如 HTTP 429、网络失败、超时或返回内容无法解析。错误提示不参与下次翻译。匹配降级本身不会被当作翻译失败，已取得的译文继续展示。
 
@@ -124,7 +126,7 @@ https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt
 
 2026-10-09，真实 Google 对比测试：同一篇文章 20 段正文，`【1】` 与 `【p1】` 各 6 次请求，均保留全部编号且顺序正确。各一次测量约 2.4 秒和 2.1 秒，不能据此判断速度差异，因此选择更简洁的 `【1】`。
 
-55 项自动测试覆盖原链接保留、编号逐段匹配、部分匹配和合并降级、括号/空格/全角数字容错、图片边界、长段落、幂等、请求限制、错误提示和安全请求隔离。仅发布合成测试，不上传真实 HAR/PCAP、文章样本或凭证。
+56 项自动测试覆盖原链接保留、编号逐段匹配、部分匹配和合并降级、括号/空格/全角数字容错、图片边界、长段落、幂等、请求限制、错误提示和安全请求隔离。仅发布合成测试，不上传真实 HAR/PCAP、文章样本或凭证。
 
 ```sh
 node --check Bloomberg/bloomberg.response.js
@@ -135,6 +137,6 @@ Google 版本的完整脚本使用真实 Google 返回进行端到端验证：6 
 
 参考：[Surge 响应脚本](https://manual.nssurge.com/scripting/http-response.html)、[Surge JS API](https://manual.nssurge.com/scripting/api.html)。
 
-2026-10-10：新增百度默认主服务、Google 备用。55 项自动测试通过，包括官方 MD5 签名样例、UTF-8/form 编码、百度多段返回、业务错误、主备切换、密钥隔离、错峰发起请求和备用并发限制。尚未填写用户真实百度凭证，因此没有进行真实百度账户调用或扣费；百度端的编号保持效果与 iOS 最终显示仍需实机验证。
+2026-10-10：新增百度默认主服务、Google 备用。56 项自动测试通过，包括官方 MD5 签名样例、UTF-8/form 编码、百度多段返回、业务错误、主备切换、密钥隔离、错峰发起请求和备用并发限制。尚未填写用户真实百度凭证，因此没有进行真实百度账户调用或扣费；百度端的编号保持效果与 iOS 最终显示仍需实机验证。
 
 接口依据：用户提供的《通用文本翻译API-接入文档》；[百度通用翻译接入文档](https://fanyi-api.baidu.com/doc/21)、[产品定价](https://api.fanyi.baidu.com/product/112)。
