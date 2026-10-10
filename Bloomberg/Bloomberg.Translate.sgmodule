@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=百度主翻译、Google 备用版（20261010-baidu-primary-1）：填写百度高级版 APP ID 和密钥，编号中英对照，失败自动用 Google，不显示 provider 标签。
+#!desc=百度主翻译、Google 备用版（20261010-provider-once-1）：填写百度高级版 APP ID 和密钥，编号中英对照，失败自动用 Google，仅在第一段后显示一次实际 provider。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
 #!arguments=启用翻译:true,翻译服务:baidu,百度APPID:,百度密钥:,去除广告配置:true,调试日志:false
 #!arguments-desc=翻译服务填 baidu（默认）或 google。百度通用翻译高级版需要 APP ID + 密钥，请在对应参数填写；不要分享含密钥的配置。百度最多6路异步请求，发起间隔150ms，单脚本低于10QPS；多篇同时加载仍共享账号配额。百度失败或未配置凭证时用Google备用，并提示原因。原文和译文保留编号，无法精确匹配时合并展示。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/91a4d1a4685402492523972ccc299935d200803d/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}},"provider":"{{{翻译服务}}}","baiduAppId":"{{{百度APPID}}}","baiduKey":"{{{百度密钥}}}"}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/305f2db3c4bcfff93679fbd19efb91326ff5eba5/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}},"provider":"{{{翻译服务}}}","baiduAppId":"{{{百度APPID}}}","baiduKey":"{{{百度密钥}}}"}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
