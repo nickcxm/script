@@ -6,7 +6,7 @@
 #!arguments-desc=参数填true/false。默认过滤非核心组件更新清单，App内置或已有组件仍可能显示。若功能异常先关闭模块，或逐组将hide_*设为false。仅处理bdmap云配置及components更新清单，不拦截整个接口、不删除本地数据、不改变账号权限。不应同时启用匹配这些接口的其他修改脚本。
 
 [Script]
-nickcxm.baidumap.minimal = type=http-response, pattern=^https:\/\/(mbd\.baidu\.com\/ccs\/v1\/start\/confsync|newclient\.map\.baidu\.com\/client\/imap\/dl\/s\/UpdateInfo\.php)(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=10, script-path=https://raw.githubusercontent.com/nickcxm/script/main/BaiduMap/baidumap.response.js, argument="{"enabled":{{{enabled}}},"hideFeed":{{{hide_feed}}},"hideAI":{{{hide_ai}}},"hideLocalServices":{{{hide_local_services}}},"hideGoldMall":{{{hide_gold_mall}}},"debug":{{{debug}}}}"
+nickcxm.baidumap.minimal = type=http-response, pattern=^https:\/\/(mbd\.baidu\.com\/ccs\/v1\/start\/confsync|newclient\.map\.baidu\.com\/client\/imap\/dl\/s\/UpdateInfo\.php)(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=10, script-path=https://raw.githubusercontent.com/nickcxm/script/ecc275889e506e3eb08ebdcf6d8b6a6fd0623633/BaiduMap/baidumap.response.js, argument="{"enabled":{{{enabled}}},"hideFeed":{{{hide_feed}}},"hideAI":{{{hide_ai}}},"hideLocalServices":{{{hide_local_services}}},"hideGoldMall":{{{hide_gold_mall}}},"debug":{{{debug}}}}"
 
 [MITM]
 hostname = %APPEND% mbd.baidu.com, newclient.map.baidu.com
