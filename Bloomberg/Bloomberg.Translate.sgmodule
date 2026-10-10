@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=Google 编号逐段对照版（20261009-google-numbered-2）：英文和中文保留【1】编号，按编号匹配插回。部分匹配时合并未能分开的范围，无 provider 标签，Google 出错时提示。
+#!desc=百度主翻译、Google 备用版（20261010-baidu-primary-1）：填写百度高级版 APP ID 和密钥，编号中英对照，失败自动用 Google，不显示 provider 标签。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
-#!arguments=启用翻译:true,去除广告配置:true,调试日志:false
-#!arguments-desc=参数填 true/false。只翻译 stories 详情正文。连续段落打包请求但按编号逐段展示，图片等组件切断批次。容错识别 [1]、【1]、【 1 】及全角数字等；无法精确匹配时保留合并译文。失败时第一段后提示，未成功内容保留原文。去广告仅清理 adParams/disableAds，不保证所有广告消失。
+#!arguments=启用翻译:true,翻译服务:baidu,百度APPID:,百度密钥:,去除广告配置:true,调试日志:false
+#!arguments-desc=翻译服务填 baidu（默认）或 google。百度通用翻译高级版需要 APP ID + 密钥，请在对应参数填写；不要分享含密钥的配置。百度最多6路异步请求，发起间隔150ms，单脚本低于10QPS；多篇同时加载仍共享账号配额。百度失败或未配置凭证时用Google备用，并提示原因。原文和译文保留编号，无法精确匹配时合并展示。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/b64bb3c2d15fdabe4d254652744dff0c3699b412/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}}}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/91a4d1a4685402492523972ccc299935d200803d/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{启用翻译}}},"removeAdConfig":{{{去除广告配置}}},"debug":{{{调试日志}}},"provider":"{{{翻译服务}}}","baiduAppId":"{{{百度APPID}}}","baiduKey":"{{{百度密钥}}}"}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
