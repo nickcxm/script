@@ -246,3 +246,97 @@ thead {
   inset-block-start: 0;
   z-index: 1;
 }
+
+.settings-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding-block-start: 20px;
+}
+.settings-form input,
+.settings-form select {
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+  border: 1px solid #d3dee4;
+  border-radius: 8px;
+  background: white;
+  padding: 10px;
+  color: inherit;
+}
+.settings-form .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.checkbox input {
+  width: auto;
+}
+.settings-form .controls,
+.settings-form p {
+  grid-column: 1/-1;
+}
+summary {
+  cursor: pointer;
+  color: #28634d;
+  padding-block: 8px;
+}
+#apple-status {
+  font-size: 12px;
+  color: #42766b;
+}
+.article-label {
+  white-space: normal;
+  min-width: 240px;
+  max-width: 440px;
+}
+.article-label strong {
+  font-weight: 600;
+  line-height: 1.6;
+}
+.article-label small {
+  display: block;
+  color: #627581;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+#article-title {
+  white-space: pre-line;
+  line-height: 1.6;
+  max-width: 850px;
+}
+#article-body {
+  max-width: 850px;
+  margin-inline: auto;
+  line-height: 1.95;
+}
+#article-view {
+  scroll-margin-top: 20px;
+}
+.source-text {
+  color: #556974;
+  margin-top: 25px;
+}
+.translated-text {
+  color: #182b36;
+  margin-top: 0;
+  font-size: 16px;
+}
+select {
+  font: inherit;
+}
+a {
+  color: #28634d;
+}
+section[hidden] {
+  display: none;
+}
+@media (max-width: 700px) {
+  .settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #article-view .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

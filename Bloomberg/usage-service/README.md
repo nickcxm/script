@@ -1,42 +1,73 @@
-# 翻译用量服务
+# Mini 翻译服务与文章存档
 
-家庭局域网地址：`http://192.168.50.71:18746`。Python 3.9+ 标准库与 SQLite，无第三方运行依赖。页面不引用外部字体、脚本或 CDN。
+地址：`http://192.168.50.71:18746`。Python 3.9+ 标准库、SQLite 与 macOS 26+ Translation.framework，无 Python 第三方依赖。默认 Apple 本机英译中，失败时百度 → Google；优先 provider 可以在管理页修改。
 
-## 规则
+## 安装语言包
 
-- 已更新的 Bloomberg 模块在每次实际翻译前，POST provider、APP ID（百度）及 Unicode 字符数。原文、译文、百度密钥、签名及 Bloomberg 登录数据不发送到本服务。
-- SQLite `BEGIN IMMEDIATE` 原子检查并预扣。每个百度 APP ID 按北京时间自然月限制 1,000,000 字符，多设备共用；请求超过剩余额度时整批拒绝，脚本使用 Google 备用。
-- 首次启动所在月记录在数据库 settings 中；该月新出现的百度 APP ID 按已用完补录 1,000,000 字符。未来月份自动从 0 开始，不删除历史记录。重启不会重置额度。
-- 配额是保守的放行预算。失败、超时、状态回报丢失不返还额度；它不是百度账单。成功回报字符、放行字符、被拦截次数分别展示；历史补录不计入调用总字数。
-- reserve 的请求 ID 幂等；客户端不自动重试 provider 请求。百度在一次文章脚本内串行申请，首个错误后熔断，避免已排队但不会发出的请求先被记账。
-- 服务不可用时不发起翻译，保留原文并提示。请求允许后若客户端退出，记录可能停留在“待回报”；额度仍被占用。
-- 不缓存文章，不区分重复打开与唯一文章。调用次数指翻译批次，不能直接当作文章数。未更新设备、其他软件直接调用百度不受本服务控制，需停用旧版模块才能全面保护额度。
+在 mini 的系统设置 → 通用 → 语言与地区 → 翻译语言，下载英语和简体中文。下载完成后点击管理页“检测语言包”。系统 API 无界面初始化需要语言包已安装；本服务不会自动弹出下载许可。
 
-## 运行
+## 部署和启动
+
+目录：`/Users/neptuno/services/translation-usage`。
 
 ```sh
+mkdir -p bin
+xcrun swiftc -parse-as-library -O AppleTranslate.swift -o bin/apple-translate
 python3 server.py
-# 可选环境变量：PORT（默认18746）、USAGE_DB（默认data/usage.sqlite3）
 ```
 
-mini 部署目录：`/Users/neptuno/services/translation-usage`。LaunchAgent：`com.neptuno.translation-usage`，登录自动启动，异常退出自动重启。日志位于该目录 `data/`。仅新增本服务，不改其他服务或反向代理。
+可选环境变量：`PORT` 默认 18746；`USAGE_DB` 默认 `data/usage.sqlite3`。
 
-SQLite 数据与密钥无关，但 APP ID 仍属于个人配置。`data/`、日志与数据库不上传 GitHub。备份时使用 SQLite backup API，避免仅复制活跃 WAL 数据库主文件。
+- LaunchAgent `com.neptuno.translation-usage` 设置 RunAtLoad 和 KeepAlive，用户登录后自动运行，异常退出自动重启。Apple 语言包属于该用户环境；不是登录前的系统级 daemon。
+- mini 的 `~/Downloads/启动翻译服务.command` 双击启动并打开页面。先检查已有进程，避免重复实例；缺少或更新 Swift 程序时自动编译。
+- 当前控制 Mac 的 `~/Downloads/启动Mini翻译服务.command` 通过已经配置的 `ssh mini` 启动远程服务，再在本机打开页面。对应源码为 launch-mini.command。
+- 两个启动脚本均支持 `--no-open`，用于验证启动而不打开浏览器。
+- 不修改其他服务或反向代理。只绑定本机网络端口，没有公网域名或端口映射。
+
+## 翻译、缓存与持久化
+
+`POST /api/translate` 接收一篇文章。标题编号为内部 0，正文 ID 为正整数。Apple 用 clientIdentifier 保证对应关系；百度/Google 按 2000/1200 字符打包，百度额外限制 5800 UTF-8 字节。编号匹配失败保留合并范围，不强行对应。
+
+按文章版本与优先 provider 建立内容键，完整结果跨设备缓存，并合并同时到达的相同请求。未完成的结果保存为 partial，不作为完整缓存。重复打开不会重新调用引擎。长段落某个片段失败时，该段完整原文交给备用服务，避免把部分译文误当成完成。
+
+数据库 `articles` 保存英文/中文标题、原文、译文、来源 URL、来源 ID、来源发布时间/更新时间、保存时间、provider、缓存命中与完成状态。详情 API 返回结构化原文及译文范围，方便后续接入 RSS/Atom/Reeder；目前没有外部推送。
+
+配置在 `data/config.json`（600 权限），只保存优先 provider 与百度 APP ID/密钥。GET 配置只返回“是否已配置密钥”，不返回密钥。留空保持旧密钥，勾选清除才删除。
+
+## 额度和统计
+
+每次引擎调用前按 provider、APP ID、Unicode 字符数登记。百度 SQLite BEGIN IMMEDIATE 原子检查并预扣，每个 APP ID 按北京时间自然月最多 1,000,000 字符，多设备共享。首次上线月记录在 settings，该月 APP ID 按此前已用完补录 1,000,000；重启不重置，下个月从 0 开始。
+
+失败/超时不返还预扣，以免请求已到百度后重复释放。页面分别显示放行字符、成功字符、失败与拦截，实际计费仍以百度账单为准。缓存命中单独统计，不伪造引擎调用。所有百度请求共用串行队列及150ms最小间隔，Google全服务最多3路并发，文章工作最多8项。
+
+保留 `/api/reserve`、`/api/complete` 兼容旧版 Surge。旧版只上传统计，没有文章存档与共享译文；所有设备都要更新模块。其他软件直接访问百度不受本服务控制。
 
 ## 接口
 
-- `GET /health`：存活检查。
-- `GET /api/stats?month=2026-10&offset=0`：每月/累计 provider 汇总、百度额度、每日数据、最近调用（每页100条）。无 month 时使用北京时间本月。
-- `POST /api/reserve`：JSON `{id,provider,appid,characters}`。`id` 为 16–100 位字母数字、横线或下划线；字符数 1–6000。返回 `{id,allowed,remaining,code}`。Google 的 appid 为空。
-- `POST /api/complete`：JSON `{id,state,error}`；state 为 success 或 failed，error 只接受简短错误码。只允许 reserved 状态更新一次。
+- `GET /health`：版本、存活与北京时间月份。
+- `GET /api/config`：优先 provider、百度 APP ID、密钥是否已配置、Apple 状态。
+- `POST /api/config`：`provider`、`baidu_appid`、`baidu_key`、`clear_baidu_key`。
+- `POST /api/translate`：`{article:{id,title,url,updatedAt,publishedAt},paragraphs:[{id,text}]}`，仅接受 Bloomberg HTTPS 来源 URL。服务不会抓取该 URL。
+- `GET /api/articles?offset=0`：每页30个文章版本及缓存汇总。
+- `GET /api/articles/<64位内容键>`：标题、来源、原文与结构化译文。
+- `GET /api/stats?month=2026-10&offset=0`：月度/累计 provider、每日数据、百度额度、每页100条引擎调用。新增记录关联文章及耗时。
+- `POST /api/reserve` / `POST /api/complete`：旧版元数据记账兼容接口。
 
-仅供可信家庭局域网，无登录认证，不映射公网端口。网页跨源写入被拒绝，无 CORS；原生 Surge 调用无 Origin。局域网其他原生客户端仍可读写账本，因此这不是对恶意客户端的鉴权系统。
+## 隐私和运行边界
 
-## 验证
+仅限可信家庭局域网，没有账户认证。网页跨源 POST 被拒绝，无 CORS；原生局域网客户端仍可访问接口，不是针对恶意客户端的授权系统。不要映射公网。
+
+文章和凭证留在 mini 的私有 data 目录（700）。百度/Google 仅收到实际提交的待译内容与各自必需参数；不接收或转发 Bloomberg Cookie、登录凭证或请求头。Apple worker 使用固定英中系统接口，不联网获取文章，不读取配置密钥。页面不引用外部字体、脚本或 CDN。
+
+数据库、WAL、配置、日志、二进制均被 gitignore 排除。升级前使用 SQLite backup API 备份数据库，并保留旧源码包于 data/backups。备份时不要只复制活跃 WAL 数据库主文件。
+
+## 测试
 
 ```sh
 python3 -m unittest discover -s tests -v
 node --test ../tests/*.test.cjs
 ```
 
-测试使用临时数据库和模拟 provider，不消耗百度额度，覆盖并发边界、跨月、APP ID 隔离、幂等、故障回退、字段隐私。
+回归测试使用临时数据库和模拟 provider，不消耗百度额度，覆盖并发边界、跨月、APP ID 隔离、缓存与在途去重、文章版本、凭证隐私、长段失败回退、编号降级。实际部署另验证 Apple 语言包、英中批量翻译、缓存以及启动器幂等。
+
+平均耗时按 provider 分别提供本月与累计值，仅计算有耗时记录的成功调用，并展示有效样本数；缓存命中和无耗时的历史记录不计入均值。每千字符耗时按成功样本总耗时 / 总字符数加权计算。新后端使用实际引擎调用耗时；仍使用旧脚本的新请求以预约到完成的时间估算，包含少量局域网记账往返。

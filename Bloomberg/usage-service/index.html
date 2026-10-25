@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>翻译用量 · Mini</title>
+    <title>翻译与文章存档 · Mini</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -11,9 +11,9 @@
     <main>
       <header>
         <div>
-          <span class="eyebrow">MINI / TRANSLATION LEDGER</span>
-          <h1>翻译用量</h1>
-          <p>每次翻译前记账，各设备共享百度额度。</p>
+          <span class="eyebrow">MINI / TRANSLATION & ARCHIVE</span>
+          <h1>翻译与文章存档</h1>
+          <p>Apple 本机翻译优先，跨设备缓存，保留中英文文章。</p>
         </div>
         <div class="controls">
           <label>统计月份 <input id="month" type="month" /></label
@@ -23,13 +23,104 @@
       <p id="connection" role="status" aria-live="polite">正在连接…</p>
       <section aria-label="本月概览" class="cards" id="summary"></section>
       <section>
+        <div class="section-head">
+          <h2>翻译设置</h2>
+          <span id="apple-status" role="status">正在检测 Apple 语言包…</span>
+        </div>
+        <p>
+          Apple → 百度 → Google 自动回退；百度 → Google；选择 Google 时直接使用
+          Google。手机仅连接此服务。
+        </p>
+        <details>
+          <summary>配置翻译服务</summary>
+          <form id="settings" class="settings-form">
+            <label
+              >优先服务<select id="provider">
+                <option value="apple">Apple 本机翻译（推荐）</option>
+                <option value="baidu">百度</option>
+                <option value="google">Google</option>
+              </select></label
+            >
+            <label
+              >百度 APP ID<input
+                id="baidu-appid"
+                inputmode="numeric"
+                autocomplete="off"
+            /></label>
+            <label
+              >百度密钥<input
+                id="baidu-key"
+                type="password"
+                autocomplete="new-password"
+                placeholder="留空保持现有密钥"
+            /></label>
+            <label class="checkbox"
+              ><input
+                id="clear-key"
+                type="checkbox"
+              />清除已保存的百度密钥</label
+            >
+            <div class="controls">
+              <button type="submit">保存设置</button
+              ><button id="check-apple" type="button">检测语言包</button>
+            </div>
+            <p id="settings-status" role="status" aria-live="polite"></p>
+          </form>
+        </details>
+      </section>
+      <section>
+        <div class="section-head">
+          <h2>文章存档</h2>
+          <span id="article-count"></span>
+        </div>
+        <p>
+          保存原标题、中文标题、原文、译文和来源链接。内容更新保留为新版本；缓存命中不会再次调用翻译引擎。
+        </p>
+        <div class="scroll" tabindex="0" role="region" aria-label="文章存档表">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">文章</th>
+                <th scope="col">源字符</th>
+                <th scope="col">状态</th>
+                <th scope="col">缓存命中</th>
+                <th scope="col">最近访问</th>
+                <th scope="col">操作</th>
+              </tr>
+            </thead>
+            <tbody id="articles"></tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <button id="article-prev">上一页</button
+          ><span id="article-page"></span
+          ><button id="article-next">下一页</button>
+        </div>
+      </section>
+      <section id="article-view" hidden aria-labelledby="article-title">
+        <div class="section-head">
+          <h2 id="article-title"></h2>
+          <button id="close-article">收起文章</button>
+        </div>
+        <p id="article-meta"></p>
+        <p>
+          <a id="article-source" target="_blank" rel="noopener noreferrer"
+            >查看原文来源</a
+          >
+        </p>
+        <div id="article-body"></div>
+      </section>
+      <section>
         <h2>百度 APP ID · 月度额度</h2>
         <p>每个 APP ID 每月上限 1,000,000 字符，按北京时间自然月计算。</p>
         <div id="quotas"></div>
       </section>
       <section>
-        <h2>Provider 累计用量</h2>
-        <p>从服务上线起累计；历史补录只计入额度，不伪造调用记录。</p>
+        <h2>Provider 用量与速度</h2>
+        <p>
+          用量从上线起累计；平均耗时仅统计有耗时记录的成功调用，缓存命中不计入。旧记录不当作零耗时。每千字符耗时按总耗时
+          / 总字符加权计算。
+        </p>
         <div class="scroll" tabindex="0" role="region" aria-label="累计用量表">
           <table>
             <thead>
@@ -40,6 +131,9 @@
                 <th scope="col">成功回报字符</th>
                 <th scope="col">失败次数</th>
                 <th scope="col">额度拦截</th>
+                <th scope="col">本月平均 / 样本</th>
+                <th scope="col">累计平均 / 样本</th>
+                <th scope="col">累计每千字符</th>
               </tr>
             </thead>
             <tbody id="totals"></tbody>
@@ -80,6 +174,8 @@
                 <th scope="col">本次字符</th>
                 <th scope="col">状态</th>
                 <th scope="col">错误码</th>
+                <th scope="col">耗时</th>
+                <th scope="col">文章</th>
               </tr>
             </thead>
             <tbody id="records"></tbody>
@@ -96,9 +192,9 @@
         </p>
         <p id="opening"></p>
         <p>
-          只保存 provider、APP
-          ID、字符数、时间和状态；不接收原文、译文、百度密钥或 Bloomberg
-          登录数据。仅供可信局域网使用。
+          文章原文和译文保存在 mini
+          的私有数据库；百度密钥仅保存在本机配置文件，接口不会回显。不会接收
+          Bloomberg Cookie 或登录凭证。仅供可信家庭局域网使用，不要映射到公网。
         </p>
       </footer>
     </main>
