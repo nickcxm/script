@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=百度主翻译、Google 备用；翻译前向 mini 记账，多设备共享每个百度 APP ID 每月100万字符上限。统计页 http://192.168.50.71:18746，服务不可达时暂停翻译。版本20261025-usage-ledger-1。
+#!desc=mini 后端翻译与文章存档：Apple 本机优先，百度与 Google 备用；跨设备缓存、按 APP ID 限额、保存中英文标题与正文。管理页 http://192.168.50.71:18746。版本20261025-backend-1。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
-#!arguments=enabled:true,provider:baidu,baidu_appid:UNSET,baidu_key:UNSET,remove_ad_config:true,debug:false,usage_host:192.168.50.71,usage_port:18746
-#!arguments-desc=usage_host 和 usage_port 为统计服务 IP 与端口，默认 192.168.50.71 和 18746，所有设备使用同一地址；服务不可达则不发起翻译。百度额度按放行字符保守预扣，失败不自动返还；超过月限额用 Google 备用。enabled/ remove_ad_config/ debug 填 true 或 false；provider 填 baidu 或 google；baidu_appid 填 APP ID，baidu_key 填密钥。UNSET 表示未配置，将使用 Google 备用。翻译服务填 baidu（默认）或 google。百度通用翻译高级版需要 APP ID + 密钥，请在对应参数填写；不要分享含密钥的配置。百度批次严格串行，上一请求完成后才发送下一请求，保留150ms最小发起间隔；多篇同时加载仍共享账号配额。百度失败或未配置凭证时用Google备用，并提示原因。百度跨图片汇总正文，每批不超过2000字符；标题放在同批【0】位置并直接写回双语title。正文编号从【1】开始，优先用百度src匹配译文；Google备用保持小批打包。
+#!arguments=enabled:true,remove_ad_config:true,debug:false,usage_host:192.168.50.71,usage_port:18746
+#!arguments-desc=usage_host 和 usage_port 为 mini 翻译服务的 IP 与端口；enabled/ remove_ad_config/ debug 填 true 或 false。翻译服务及百度 APP ID/密钥改在管理页配置，手机只提交文章标题、正文段落、来源链接与更新时间，不上传 Bloomberg Cookie/登录凭证。Apple 本机翻译优先，语言包不可用或失败时依次使用百度、Google；百度每个 APP ID 每个北京时间自然月最多100万字符。缓存命中不重复翻译，翻译结果直接内联追加。后端不可达时保留原文并提示。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/2882a9f7f7bbca6d23c0b9e278f341943fdf332e/Bloomberg/bloomberg.response.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"provider":"{{{provider}}}","baiduAppId":"{{{baidu_appid}}}","baiduKey":"{{{baidu_key}}}","usageUrl":"http://{{{usage_host}}}:{{{usage_port}}}"}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/aa8bf9c390accce07f197a982839b929f0afe2e2/Bloomberg/bloomberg.backend.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"backendUrl":"http://{{{usage_host}}}:{{{usage_port}}}"}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
