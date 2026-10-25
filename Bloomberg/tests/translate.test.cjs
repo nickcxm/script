@@ -214,7 +214,7 @@ test('module scope, Baidu credentials, pinned URL and parameter rendering remain
   assert.match(line, /script-path=https:\/\/raw\.githubusercontent\.com\/nickcxm\/script\/[a-f0-9]{40}\//);
   const values = Object.fromEntries(text.match(/^#!arguments=(.*)$/m)[1].split(',').map(item => item.split(':')));
   const argument = line.match(/argument="(.*)"$/)[1].replace(/\{\{\{(.*?)\}\}\}/g, (_, name) => values[name]);
-  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: 'UNSET', baiduKey: 'UNSET' });
+  assert.deepEqual(JSON.parse(argument), { enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: 'UNSET', baiduKey: 'UNSET', usageUrl: 'http://192.168.50.71:18746' });
 });
 
 
@@ -508,4 +508,31 @@ test('final display formatting leaves original body bracket citations and links 
 test('merged translation numbers stay together on the translated text line', () => {
   const original={components:[{role:'p',[api.PARAGRAPH_ID]:2,parts:[{role:'text',text:'【2】 '},{role:'text',text:'Original.'},{role:'text',[api.TRANSLATION_MARKER]:true,text:'\n【1】【2】\n合并译文。'}]}]};
   assert.equal(api.formatDisplayNumbers(original).components[0].parts[2].text,'\n1. 2. 合并译文。');
+});
+
+
+test('published ledger flow blocks Baidu before network and records Google fallback', async () => {
+  const metadata = [];
+  const output = await execute({ argument: JSON.stringify({ provider: 'baidu', baiduAppId: '12345678', baiduKey: 'PRIVATE_KEY', usageUrl: 'http://192.168.50.71:18746' }),
+    post(req, callback) {
+      assert.ok(req.url.startsWith('http://192.168.50.71:18746/api/'));
+      const data = JSON.parse(req.body); metadata.push(data);
+      assert.equal(JSON.stringify(data).includes('PRIVATE_KEY'), false);
+      callback(null, { status: 200 }, JSON.stringify(req.url.endsWith('/reserve') ? { id: data.id, allowed: data.provider !== 'baidu' } : { updated: true }));
+    }
+  });
+  assert.equal(metadata.filter(row => row.provider === 'baidu').length, 1);
+  assert.ok(metadata.some(row => row.provider === 'google'));
+  const story = JSON.parse(output.result.body);
+  assert.match(JSON.stringify(story), /100 万字符额度已用完/);
+  assert.match(JSON.stringify(story), /Google/);
+  assert.ok(translationBlocks(story).length > 0);
+});
+
+test('ledger outage preserves originals and never sends a provider request', async () => {
+  const output = await execute({ argument: JSON.stringify({ provider: 'google', usageUrl: 'http://192.168.50.71:18746' }),
+    post(req, callback) { callback('offline'); }, get() { assert.fail('provider must not run without a reservation'); }
+  });
+  assert.match(output.result.body, /统计服务不可达/);
+  assert.equal(translationBlocks(JSON.parse(output.result.body)).length, 0);
 });

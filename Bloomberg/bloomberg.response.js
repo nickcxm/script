@@ -1,13 +1,14 @@
 /*
- * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261010-number-display-1.
+ * Bloomberg Baidu-primary / Google-backup body translation for Surge — 20261025-usage-ledger-1.
  * Independently written against a user-provided story JSON response.
- * Only paragraph text is sent to the selected translation provider.
- * No Bloomberg headers, cookies, URLs, account data, or persistent storage.
+ * Title/body text is sent to the selected translation provider.
+ * The LAN ledger receives provider, APP ID, character count and result status only.
+ * No Bloomberg headers, cookies, URLs, account data, or local persistent storage.
  */
 (() => {
   'use strict';
 
-  const VERSION = '20261010-number-display-1';
+  const VERSION = '20261025-usage-ledger-1';
   const INFO_MARKER = '_nickcxmTranslationInfo';
   const STORY_URL = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(?:\?[^#]*)?$/;
   const GOOGLE_URL = 'https://translate.googleapis.com/translate_a/single';
@@ -24,7 +25,7 @@
   const TOTAL_TIMEOUT_MS = 45000;
   const REQUEST_TIMEOUT_MS = 7000;
   const CONCURRENCY = 3;
-  const DEFAULTS = Object.freeze({ enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: '', baiduKey: '' });
+  const DEFAULTS = Object.freeze({ enabled: true, removeAdConfig: true, debug: false, provider: 'baidu', baiduAppId: '', baiduKey: '', usageUrl: '' });
 
   function options(argument) {
     const supplied = typeof argument === 'string' ? JSON.parse(argument || '{}') : argument || {};
@@ -36,6 +37,8 @@
     for (const key of ['baiduAppId', 'baiduKey']) if (typeof supplied[key] === 'string') {
       const value = supplied[key].trim(); result[key] = value === 'UNSET' ? '' : value;
     }
+    if (typeof supplied.usageUrl === 'string') result.usageUrl = supplied.usageUrl.trim().replace(/\/+$/, '');
+    if (result.usageUrl && !/^https?:\/\/[A-Za-z0-9.:-]+(?:\/[A-Za-z0-9_/-]*)?$/.test(result.usageUrl)) throw new Error('Invalid usage service URL');
     return result;
   }
 
@@ -308,6 +311,89 @@
     };
   }
 
+  // The ledger receives metadata only. It never sees the article, signing key,
+  // provider URL, Bloomberg headers, or translation response.
+  // Surge's default JS engine has no clearTimeout and permits only 64 pending
+  // timers. Share one watchdog among ledger requests instead of two per batch.
+  const usageDeadlines = new Set();
+  let usageTimerPending = false;
+  function watchUsageTimeout(callback, timeoutMs) {
+    const item = { callback, deadline: Date.now() + timeoutMs };
+    usageDeadlines.add(item);
+    function arm() {
+      if (usageTimerPending || !usageDeadlines.size) return;
+      usageTimerPending = true;
+      setTimeout(() => {
+        usageTimerPending = false;
+        const now = Date.now();
+        for (const entry of Array.from(usageDeadlines)) if (entry.deadline <= now) {
+          usageDeadlines.delete(entry); entry.callback();
+        }
+        arm();
+      }, 100);
+    }
+    arm();
+    return () => usageDeadlines.delete(item);
+  }
+
+  function usagePost(httpClient, base, path, data, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error, value) => {
+        if (settled) return; settled = true;
+        cancelTimeout();
+        if (error) reject(Object.assign(new Error('Usage service unavailable'), { code: 'usage' })); else resolve(value);
+      };
+      const cancelTimeout = watchUsageTimeout(() => finish(true), timeoutMs);
+      try {
+        httpClient.post({ url: base + path, policy: 'DIRECT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+          timeout: Math.max(0.1, timeoutMs / 1000), 'auto-cookie': false, 'auto-redirect': false }, (error, response, body) => {
+          if (error || Number(response?.status ?? response?.statusCode) !== 200) return finish(true);
+          try { const value = JSON.parse(body); if (!value || typeof value !== 'object') return finish(true); finish(null, value); }
+          catch (_) { finish(true); }
+        });
+      } catch (_) { finish(true); }
+    });
+  }
+
+  function trackedTransport(provider, translate, httpClient, params) {
+    if (!params.usageUrl) return translate; // Compatibility for standalone scripts; the published module always enables it.
+    let unavailable;
+    const tracked = async (text, timeoutMs) => {
+      if (provider === 'baidu') {
+        if (unavailable) throw unavailable;
+        baiduRequest(text, params, timeoutMs, 'validation');
+      }
+      const start = Date.now();
+      const id = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2) + '_' + Math.random().toString(36).slice(2);
+      let ticket;
+      try {
+        ticket = await usagePost(httpClient, params.usageUrl, '/api/reserve', {
+          id, provider, appid: provider === 'baidu' ? params.baiduAppId : '', characters: Array.from(text).length
+        }, Math.max(1, Math.min(1200, timeoutMs - 200)));
+        if (ticket.id !== id || typeof ticket.allowed !== 'boolean') throw Object.assign(new Error('Invalid usage reservation'), { code: 'usage' });
+        if (!ticket.allowed) throw Object.assign(new Error('Monthly quota reached'), { code: 'quota' });
+      } catch (error) { if (provider === 'baidu') unavailable = error; throw error; }
+      const complete = async (state, error) => {
+        const code = error ? String(error.baiduCode || error.code || 'unknown').replace(/[^a-zA-Z0-9_:.-]/g, '').slice(0, 100) : '';
+        try { await usagePost(httpClient, params.usageUrl, '/api/complete', { id, state, error: code }, 500); }
+        catch (_) { /* Reservation stays charged; never repeat a provider call to repair telemetry. */ }
+      };
+      let result;
+      try {
+        const remaining = timeoutMs - (Date.now() - start) - 500;
+        if (remaining <= 0) throw Object.assign(new Error('Translation timeout'), { code: 'timeout' });
+        result = await translate(text, remaining);
+      } catch (error) {
+        if (provider === 'baidu') unavailable = error;
+        await complete('failed', error); throw error;
+      }
+      await complete('success'); return result;
+    };
+    // Reservation happens inside the physical request queue, not before it.
+    return provider === 'baidu' ? limitConcurrency(tracked, 1) : tracked;
+  }
+
   function marker(id) { return '【' + id + '】'; }
   const MARKERS = /[【\[［]\s*(?:[pPＰｐ]\s*)?([0-9０-９](?:[ \t]*[0-9０-９])*)\s*[】\]］]/g;
   function markerNumber(value) {
@@ -390,6 +476,8 @@
   }
 
   function readableError(error) {
+    if (error?.code === 'quota') return '百度本月 100 万字符额度已用完，已拦截百度请求。';
+    if (error?.code === 'usage') return '翻译统计服务不可达或记账失败，为避免漏记已暂停该请求。';
     if (error?.code === 'baidu') {
       const messages = { missing: '未配置百度 APP ID 或密钥。', config: '百度 APP ID 或密钥格式不正确。', length: '百度翻译文本超过长度限制。',
         '52003': '百度服务未授权，请检查 APP ID 和服务开通状态。', '54001': '百度签名错误，请检查密钥。', '54003': '百度访问频率受限。',
@@ -574,7 +662,7 @@
           const countSuccess = (name, translate) => async (text, timeoutMs) => {
             const value = await translate(text, timeoutMs); providerSuccess[name]++; return value;
           };
-          const google = countSuccess('google', limitConcurrency(googleTransport($httpClient), CONCURRENCY));
+          const google = countSuccess('google', limitConcurrency(trackedTransport('google', googleTransport($httpClient), $httpClient, params), CONCURRENCY));
           const googleBackup = async (text, timeoutMs) => {
             const start = Date.now();
             const parts = text.split(/\n+(?=【\d+】)/);
@@ -609,7 +697,7 @@
           };
           const fallbackReasons = new Set();
           let fallbackCount = 0;
-          const translate = params.provider === 'baidu' ? primaryWithFallback(countSuccess('baidu', baiduTransport($httpClient, params)), googleBackup, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
+          const translate = params.provider === 'baidu' ? primaryWithFallback(countSuccess('baidu', trackedTransport('baidu', baiduTransport($httpClient, params), $httpClient, params)), googleBackup, error => { fallbackCount++; fallbackReasons.add(readableError(error)); }) : google;
           const output = await translateStory(original, translate, { ...params, workerConcurrency: params.provider === 'baidu' ? 6 : CONCURRENCY });
           const notices = output.story.components.filter(item => item?.[INFO_MARKER] === 'notice').map(item => item.parts?.[0]?.text).filter(Boolean);
           output.story.components = output.story.components.filter(item => !item?.[INFO_MARKER]);
@@ -640,7 +728,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, INLINE_IDS, appendInline, formatDisplayNumbers, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
+    module.exports = { usagePost, trackedTransport, safeBaiduMessage, readableError, md5, utf8Bytes, baiduRequest, parseBaidu, baiduTransport, primaryWithFallback, limitConcurrency, BAIDU_INTERVAL_MS, VERSION, INFO_MARKER, INLINE_IDS, appendInline, formatDisplayNumbers, PARAGRAPH_ID, SOURCE_IDS, marker, alignTranslation, displayTranslation, STORY_URL, LEGACY_PREFIX, TRANSLATION_MARKER, SOURCE_COUNT, options, extractText, splitText, googleRequest, parseTranslation,
       googleTransport, translateStory, responseHeaders, run, TOTAL_TIMEOUT_MS };
   }
   if (typeof $done === 'function') run();

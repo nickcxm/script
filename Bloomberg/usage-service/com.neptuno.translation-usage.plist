@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.neptuno.translation-usage</string>
+<key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>-u</string><string>/Users/neptuno/services/translation-usage/server.py</string></array>
+<key>WorkingDirectory</key><string>/Users/neptuno/services/translation-usage</string>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>StandardOutPath</key><string>/Users/neptuno/services/translation-usage/data/service.log</string>
+<key>StandardErrorPath</key><string>/Users/neptuno/services/translation-usage/data/error.log</string>
+</dict></plist>

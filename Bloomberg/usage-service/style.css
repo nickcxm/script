@@ -1,0 +1,248 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #182b36;
+  background: #f3f6f8;
+  font-size: 15px;
+  color-scheme: light;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1180px;
+  margin: auto;
+  padding: 42px 28px;
+}
+header,
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #42766b;
+  font-weight: 700;
+}
+h1 {
+  font-size: 36px;
+  letter-spacing: -1px;
+  margin: 12px 0;
+}
+h2 {
+  font-size: 19px;
+  margin: 0 0 12px;
+}
+p {
+  line-height: 1.7;
+  color: #627581;
+  margin: 6px 0 14px;
+}
+.controls {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  color: #627581;
+}
+input,
+button {
+  font: inherit;
+  border: 1px solid #d3dee4;
+  border-radius: 8px;
+  background: white;
+  padding: 10px 14px;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:hover {
+  background: #e9f1ef;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:focus-visible {
+  outline: 3px solid #388d7b;
+  outline-offset: 3px;
+}
+#connection {
+  font-size: 12px;
+  margin: 16px 0 22px;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  background: none;
+  padding: 0;
+  border: 0;
+}
+.card,
+section {
+  background: white;
+  border: 1px solid #e0e8ed;
+  border-radius: 14px;
+  padding: 23px;
+  margin-bottom: 20px;
+}
+.card {
+  margin: 0;
+  min-width: 0;
+}
+.card strong {
+  display: block;
+  font-size: 29px;
+  margin: 12px 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.card span {
+  font-size: 12px;
+  color: #627581;
+}
+.card.featured {
+  background: #143c36;
+  color: #fff;
+  border-color: #143c36;
+}
+.card.featured span {
+  color: #b5d6cd;
+}
+.scroll {
+  overflow-x: auto;
+  border-radius: 7px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: left;
+}
+th {
+  font-size: 12px;
+  color: #667c88;
+  background: #f5f8fa;
+  font-weight: 600;
+}
+td,
+th {
+  padding: 13px 15px;
+  border-bottom: 1px solid #edf1f4;
+}
+td {
+  font-size: 13px;
+}
+caption {
+  text-align: left;
+  color: #627581;
+  font-size: 12px;
+  padding: 0 0 13px;
+}
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+.badge {
+  padding: 4px 8px;
+  background: #e8f5ee;
+  color: #28634d;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.badge.failed,
+.badge.blocked {
+  background: #fff1e9;
+  color: #995b2b;
+}
+.badge.reserved {
+  background: #edf1f5;
+  color: #566b78;
+}
+.quota {
+  border-top: 1px solid #edf1f4;
+  padding: 18px 0;
+}
+.quota strong {
+  font-size: 16px;
+}
+.quota p {
+  font-size: 13px;
+  margin-top: 8px;
+}
+.quota progress {
+  width: 100%;
+  height: 9px;
+  accent-color: #3d8b77;
+}
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+footer p {
+  font-size: 12px;
+}
+.empty {
+  text-align: center;
+  color: #8797a0;
+  padding: 30px;
+}
+.error {
+  color: #a3402f !important;
+}
+@media (max-width: 700px) {
+  main {
+    padding: 26px 16px;
+  }
+  header {
+    align-items: start;
+    flex-direction: column;
+  }
+  h1 {
+    font-size: 30px;
+  }
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .card,
+  section {
+    padding: 17px;
+  }
+  .card strong {
+    font-size: 25px;
+  }
+  .controls {
+    width: 100%;
+  }
+  td,
+  th {
+    padding: 12px;
+  }
+  .pagination {
+    justify-content: center;
+  }
+}
+.scroll {
+  max-block-size: 560px;
+}
+thead {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+}

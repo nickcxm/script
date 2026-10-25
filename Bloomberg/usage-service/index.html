@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>翻译用量 · Mini</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <span class="eyebrow">MINI / TRANSLATION LEDGER</span>
+          <h1>翻译用量</h1>
+          <p>每次翻译前记账，各设备共享百度额度。</p>
+        </div>
+        <div class="controls">
+          <label>统计月份 <input id="month" type="month" /></label
+          ><button id="refresh">刷新</button>
+        </div>
+      </header>
+      <p id="connection" role="status" aria-live="polite">正在连接…</p>
+      <section aria-label="本月概览" class="cards" id="summary"></section>
+      <section>
+        <h2>百度 APP ID · 月度额度</h2>
+        <p>每个 APP ID 每月上限 1,000,000 字符，按北京时间自然月计算。</p>
+        <div id="quotas"></div>
+      </section>
+      <section>
+        <h2>Provider 累计用量</h2>
+        <p>从服务上线起累计；历史补录只计入额度，不伪造调用记录。</p>
+        <div class="scroll" tabindex="0" role="region" aria-label="累计用量表">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Provider</th>
+                <th scope="col">放行次数</th>
+                <th scope="col">放行总字符</th>
+                <th scope="col">成功回报字符</th>
+                <th scope="col">失败次数</th>
+                <th scope="col">额度拦截</th>
+              </tr>
+            </thead>
+            <tbody id="totals"></tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <h2>每日用量</h2>
+        <div class="scroll" tabindex="0" role="region" aria-label="每日用量表">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">日期</th>
+                <th scope="col">Provider</th>
+                <th scope="col">放行次数</th>
+                <th scope="col">字符数</th>
+              </tr>
+            </thead>
+            <tbody id="daily"></tbody>
+          </table>
+        </div>
+      </section>
+      <section>
+        <div class="section-head">
+          <h2>调用明细</h2>
+          <span id="count"></span>
+        </div>
+        <div class="scroll" tabindex="0" role="region" aria-label="调用明细表">
+          <table>
+            <caption>
+              时间为北京时间；每页 100 条，10 秒自动刷新。
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">时间</th>
+                <th scope="col">Provider</th>
+                <th scope="col">APP ID</th>
+                <th scope="col">本次字符</th>
+                <th scope="col">状态</th>
+                <th scope="col">错误码</th>
+              </tr>
+            </thead>
+            <tbody id="records"></tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <button id="prev">上一页</button><span id="page"></span
+          ><button id="next">下一页</button>
+        </div>
+      </section>
+      <footer>
+        <p>
+          额度采用保守记账：放行前原子预扣，失败或超时不自动返还，防止请求已到达百度却重复释放额度。因此这里是用量保护账本，实际计费以百度账单为准。
+        </p>
+        <p id="opening"></p>
+        <p>
+          只保存 provider、APP
+          ID、字符数、时间和状态；不接收原文、译文、百度密钥或 Bloomberg
+          登录数据。仅供可信局域网使用。
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>
