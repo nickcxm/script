@@ -105,25 +105,32 @@ async function load() {
     }
     fillTable(
       "totals",
-      data.totals.map((r) => [
-        provider(r.provider),
-        fmt(r.calls),
-        fmt(r.characters),
-        fmt(r.success_characters),
-        fmt(r.failed),
-        fmt(r.blocked),
-        duration(
-          data.monthly.find((row) => row.provider === r.provider)
-            ?.avg_elapsed_ms,
-        ) +
-          " / " +
-          fmt(
+      ["apple", "baidu", "google"]
+        .map(
+          (name) =>
+            data.totals.find((row) => row.provider === name) || {
+              provider: name,
+            },
+        )
+        .map((r) => [
+          provider(r.provider),
+          fmt(r.calls),
+          fmt(r.characters),
+          fmt(r.success_characters),
+          fmt(r.failed),
+          fmt(r.blocked),
+          duration(
             data.monthly.find((row) => row.provider === r.provider)
-              ?.timed_calls,
-          ),
-        duration(r.avg_elapsed_ms) + " / " + fmt(r.timed_calls),
-        duration(r.ms_per_1000_characters),
-      ]),
+              ?.avg_elapsed_ms,
+          ) +
+            " / " +
+            fmt(
+              data.monthly.find((row) => row.provider === r.provider)
+                ?.timed_calls,
+            ),
+          duration(r.avg_elapsed_ms) + " / " + fmt(r.timed_calls),
+          duration(r.ms_per_1000_characters),
+        ]),
     );
     fillTable(
       "daily",
