@@ -1,12 +1,12 @@
 #!name=Bloomberg 文章中英对照 @nickcxm
-#!desc=mini 后端翻译与文章存档：Apple 本机优先，百度与 Google 备用；跨设备缓存、按 APP ID 限额、保存中英文标题与正文。管理页 http://192.168.50.71:18746。版本20261025-backend-1。
+#!desc=mini 后端翻译与文章存档：Apple 本机优先，百度与 Google 备用；mini 连接失败时设备直接使用 Google；跨设备缓存、按 APP ID 限额、保存中英文标题与正文。管理页 http://192.168.50.71:18746。版本20261026-direct-google-1。
 #!author=nickcxm
 #!homepage=https://github.com/nickcxm/script/tree/main/Bloomberg
 #!arguments=enabled:true,remove_ad_config:true,debug:false,usage_host:192.168.50.71,usage_port:18746
-#!arguments-desc=usage_host 和 usage_port 为 mini 翻译服务的 IP 与端口；enabled/ remove_ad_config/ debug 填 true 或 false。翻译服务及百度 APP ID/密钥改在管理页配置，手机只提交文章标题、正文段落、来源链接与更新时间，不上传 Bloomberg Cookie/登录凭证。Apple 本机翻译优先，语言包不可用或失败时依次使用百度、Google；百度每个 APP ID 每个北京时间自然月最多100万字符。缓存命中不重复翻译，翻译结果直接内联追加。后端不可达时保留原文并提示。
+#!arguments-desc=usage_host 和 usage_port 为 mini 翻译服务的 IP 与端口；enabled/ remove_ad_config/ debug 填 true 或 false。翻译服务及百度 APP ID/密钥改在管理页配置，手机只提交文章标题、正文段落、来源链接与更新时间，不上传 Bloomberg Cookie/登录凭证。Apple 本机翻译优先，语言包不可用或失败时依次使用百度、Google；百度每个 APP ID 每个北京时间自然月最多100万字符。缓存命中不重复翻译，翻译结果直接内联追加。后端请求遵循现有 Surge 路由，不强制 DIRECT；先用1.2秒检查连通性，文章请求最多34秒，异常时设备端直接调用 Google。直连备用最多三路并发、18秒预算，不依赖 mini 统计服务；备用用量与译文未回传 mini，无法计入其统计与存档。全部失败才保留原文并提示。
 
 [Script]
-nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/aa8bf9c390accce07f197a982839b929f0afe2e2/Bloomberg/bloomberg.backend.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"backendUrl":"http://{{{usage_host}}}:{{{usage_port}}}"}"
+nickcxm.bloomberg.translate = type=http-response, pattern=^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/[A-Z0-9]{14}(\?[^#]*)?$, requires-body=true, max-size=1048576, timeout=60, script-path=https://raw.githubusercontent.com/nickcxm/script/2836a35e14e7ad2dcfd7562e2f8ae482bebda733/Bloomberg/bloomberg.backend.js, argument="{"enabled":{{{enabled}}},"removeAdConfig":{{{remove_ad_config}}},"debug":{{{debug}}},"backendUrl":"http://{{{usage_host}}}:{{{usage_port}}}"}"
 
 [MITM]
 hostname = %APPEND% cdn-mobapi.bloomberg.com
