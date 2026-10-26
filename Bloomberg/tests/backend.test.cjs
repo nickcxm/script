@@ -36,18 +36,38 @@ test('fallback provider and failure notices appear once after first paragraph',(
 test('unexpected response IDs cannot be applied to unrelated paragraphs',()=>{
  const data=response();data.translations=[{ids:[99],text:'错误译文'}];assert.throws(()=>api.render(fixture(),data,{}));
 });
-async function execute({offline=false,data=response(),requestUrl=url,body=JSON.stringify(fixture())}={}){
- const posts=[],logs=[],timers=[];let called=0;let done;
+async function execute({offline=false,data=response(),requestUrl=url,body=JSON.stringify(fixture()),healthError=false,googleError=false,post,get,expireTimers=false}={}){
+ const posts=[],gets=[],logs=[],timers=[];let called=0;let done;
  const completed=new Promise(resolve=>{done=resolve;});
- vm.runInNewContext(script,{$request:{url:requestUrl,method:'GET',headers:{Cookie:'PRIVATE_COOKIE',Authorization:'PRIVATE_AUTH'}},$response:{status:200,body,headers:{'Content-Type':'application/json',ETag:'old'}},$argument:JSON.stringify({backendUrl:'http://192.168.50.71:18746'}),$httpClient:{post(req,cb){posts.push(req);cb(offline?'offline':null,{status:200},JSON.stringify(data));},get(){assert.fail('no direct provider request');}},$persistentStore:new Proxy({},{get(){throw Error('no storage');}}),console:{log(text){logs.push(text);}},setTimeout(fn){timers.push(fn);},$done(value){called++;done(value);}});
- const value=await completed;for(const timer of timers)timer();await Promise.resolve();assert.equal(called,1);return{value,posts,logs};
+ vm.runInNewContext(script,{$request:{url:requestUrl,method:'GET',headers:{Cookie:'PRIVATE_COOKIE',Authorization:'PRIVATE_AUTH'}},$response:{status:200,body,headers:{'Content-Type':'application/json',ETag:'old'}},$argument:JSON.stringify({backendUrl:'http://192.168.50.71:18746'}),$httpClient:{post(req,cb){posts.push(req);if(post)return post(req,cb);cb(offline?'offline':null,{status:200},JSON.stringify(data));},get(req,cb){gets.push(req);if(req.url.endsWith('/health'))return cb(healthError?'offline':null,{status:200},JSON.stringify({ok:true}));if(get)return get(req,cb);if(googleError)return cb('offline');const text=new URL(req.url).searchParams.get('q');const ids=[...text.matchAll(/【(\d+)】/g)].map(x=>x[1]);cb(null,{status:200},JSON.stringify([[...ids.map(id=>['【'+id+'】谷歌译文'+id+'。','original'])]]));}},$persistentStore:new Proxy({},{get(){throw Error('no storage');}}),console:{log(text){logs.push(text);}},setTimeout(fn,ms){timers.push({fn,ms});if(expireTimers)queueMicrotask(fn);},$done(value){called++;done(value);}});
+ const value=await completed;for(const timer of timers)timer.fn();await Promise.resolve();assert.equal(called,1);return{value,posts,gets,logs,timers};
 }
-test('one backend request per article, direct routing and clean independent headers',async()=>{
- const result=await execute();assert.equal(result.posts.length,1);assert.equal(result.posts[0].url,'http://192.168.50.71:18746/api/translate');assert.equal(result.posts[0].policy,'DIRECT');
- assert.deepEqual(Object.keys(result.posts[0].headers),['Content-Type']);assert.ok(!JSON.stringify(result.posts).includes('PRIVATE_'));assert.equal(JSON.parse(result.value.body).title,'Markets rally\n市场上涨');assert.equal(result.value.headers.ETag,undefined);
+test('backend requests follow profile routing and keep independent headers',async()=>{
+ const result=await execute();assert.equal(result.posts.length,1);assert.equal(result.posts[0].url,'http://192.168.50.71:18746/api/translate');assert.equal(result.posts[0].policy,undefined);assert.equal(result.gets.length,1);assert.equal(result.gets[0].policy,undefined);assert.ok(result.gets[0].url.endsWith('/health'));
+ assert.deepEqual(Object.keys(result.posts[0].headers),['Content-Type']);assert.ok(!JSON.stringify(result.posts).includes('PRIVATE_'));assert.equal(JSON.parse(result.value.body).title,'Markets rally\n市场上涨');assert.equal(result.value.headers.ETag,undefined);assert.equal(result.posts[0].timeout,34);
 });
-test('backend offline keeps original text and images, adds one actionable error',async()=>{
- const result=await execute({offline:true});const story=JSON.parse(result.value.body);assert.equal(story.title,fixture().title);assert.deepEqual(story.components[0],fixture().components[0]);assert.match(result.value.body,/无法连接 mini/);assert.equal(result.posts.length,1);
+test('backend offline translates on device via Google, preserving images and anchors',async()=>{
+ const result=await execute({offline:true});const story=JSON.parse(result.value.body);assert.match(story.title,/Markets rally\n谷歌/);assert.equal(story.components[0].parts.at(-1).text,'\n1. 谷歌译文1。');assert.deepEqual(story.components.find(x=>x.role==='image'),fixture().components[1]);assert.match(result.value.body,/Google（设备直连备用）/);assert.match(result.value.body,/未回传 mini/);assert.equal(result.posts.length,1);
+ const google=result.gets.filter(x=>x.url.includes('translate.googleapis.com'));assert.ok(google.length);for(const req of google){assert.equal(req.policy,undefined);assert.deepEqual(Object.keys(req.headers),['Accept']);assert.ok(!JSON.stringify(req).includes('PRIVATE_'));}
+});
+test('unreachable health skips article upload and immediately uses Google',async()=>{
+ const result=await execute({healthError:true});assert.equal(result.posts.length,0);assert.match(result.value.body,/谷歌译文1/);assert.match(result.value.body,/mini 连接检查网络请求失败/);
+});
+test('both services failing preserve original text and report Google errors',async()=>{
+ const result=await execute({healthError:true,googleError:true});const story=JSON.parse(result.value.body);assert.equal(story.title,fixture().title);assert.equal(story.components[0].parts[1].text,'First paragraph.');assert.ok(!story.components[0].parts.some(x=>x._nickcxmTranslation));assert.match(result.value.body,/Google 备用网络请求失败/);assert.match(result.value.body,/保留原文/);
+});
+test('malformed backend and HTTP errors trigger the final Google fallback',async()=>{
+ for(const post of [(req,cb)=>cb(null,{status:503},'{}'),(req,cb)=>cb(null,{status:200},'not json'),(req,cb)=>cb(null,{status:200},JSON.stringify({...response(),translations:[{ids:[99],text:'坏结果'}]}))]){
+  const result=await execute({post});assert.match(result.value.body,/谷歌译文1/);assert.match(result.value.body,/Google（设备直连备用）/);
+ }
+});
+test('backend timeout leaves time for Google and late callbacks cannot finish twice',async()=>{
+ let late;const result=await execute({post(req,cb){late=cb;},expireTimers:true});assert.match(result.value.body,/mini 文章翻译接口请求超时/);assert.match(result.value.body,/谷歌译文1/);assert.ok(result.timers.some(x=>x.ms===34000));late(null,{status:200},JSON.stringify(response()));
+});
+test('partial backend result keeps Apple successes and only translates missing paragraphs',async()=>{
+ const data=response();data.translations=data.translations.filter(x=>!x.ids.includes(2));data.complete=false;
+ const result=await execute({data});const queries=result.gets.filter(x=>x.url.includes('translate.googleapis.com')).map(x=>new URL(x.url).searchParams.get('q')).join('');assert.ok(queries.includes('【2】'));assert.ok(!queries.includes('【1】'));assert.ok(!queries.includes('【0】'));
+ const story=JSON.parse(result.value.body);assert.equal(story.title,'Markets rally\n市场上涨');assert.match(result.value.body,/第一段。/);assert.match(result.value.body,/谷歌译文2/);
 });
 test('unrelated endpoints and malformed JSON pass through without networking',async()=>{
  const irrelevant=await execute({requestUrl:'https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/find'});assert.equal(irrelevant.posts.length,0);assert.equal(irrelevant.value.body,undefined);
@@ -59,4 +79,26 @@ test('module renders backend-only arguments and contains no device credentials',
  const line=module.split('\n').find(x=>x.startsWith('nickcxm.'));
  const argument=line.match(/argument="(.*)"$/)[1].replace(/\{\{\{(.*?)\}\}\}/g,(_,key)=>values[key]);
  assert.deepEqual(JSON.parse(argument),{enabled:true,removeAdConfig:true,debug:false,backendUrl:'http://192.168.50.71:18746'});assert.match(line,/bloomberg\.backend\.js/);assert.ok(!line.includes('baiduKey'));assert.ok(!line.includes('translate.googleapis.com'));
+});
+
+
+test('Google batches retain complete text, limit characters and separate repeated IDs',()=>{
+ const text='A😀 '.repeat(1000);const batches=api.googleBatches([{id:1,text},{id:2,text:'Second paragraph.'}]);
+ assert.equal(batches.flat().filter(x=>x.id===1).map(x=>x.text.replace(/^【1】/,'')).join(''),text);
+ for(const batch of batches){assert.ok(Array.from(batch.map(x=>x.text).join('\n')).length<=1200);assert.equal(new Set(batch.map(x=>x.id)).size,batch.length);}
+});
+test('numbered alignment accepts changed symbols and merges only unresolved ranges',()=>{
+ assert.deepEqual(api.alignGoogle('[ ２ ]第二段【1】第一段',[1,2]).pieces.map(x=>x.ids),[[2],[1]]);
+ assert.deepEqual(api.alignGoogle('【1】前两段【3】第三段',[1,2,3]).pieces.map(x=>x.ids),[[1,2],[3]]);
+ assert.deepEqual(api.alignGoogle('无编号译文',[1,2]).pieces[0].ids,[1,2]);
+});
+test('Google fallback has three in-flight requests maximum and joins long paragraphs',async()=>{
+ let active=0,maximum=0;
+ const result=await execute({healthError:true,body:JSON.stringify({...fixture(),components:[p('A'.repeat(7000))]}),get(req,cb){active++;maximum=Math.max(maximum,active);const query=new URL(req.url).searchParams.get('q');const ids=[...query.matchAll(/【(\d+)】/g)].map(x=>x[1]);setImmediate(()=>{active--;cb(null,{status:200},JSON.stringify([[...ids.map(id=>['【'+id+'】译文。','original'])]]));});}});
+ assert.equal(maximum,3);const story=JSON.parse(result.value.body);assert.equal(story.components[0].parts.filter(x=>x._nickcxmTranslation).length,1);assert.ok(story.components[0].parts.at(-1).text.includes('译文。译文。'));
+});
+test('a failed fragment cannot be applied as a complete long paragraph',async()=>{
+ let requests=0;
+ const result=await execute({healthError:true,body:JSON.stringify({...fixture(),components:[p('A'.repeat(2400))]}),get(req,cb){requests++;if(requests===2)return cb('offline');const ids=[...new URL(req.url).searchParams.get('q').matchAll(/【(\d+)】/g)].map(x=>x[1]);cb(null,{status:200},JSON.stringify([[...ids.map(id=>['【'+id+'】译文。','original'])]]));}});
+ const story=JSON.parse(result.value.body);assert.ok(!story.components[0].parts.some(x=>x._nickcxmTranslation));assert.match(result.value.body,/部分内容未能翻译/);
 });
