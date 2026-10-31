@@ -1,8 +1,8 @@
 /* Bloomberg adapter: mini translation/cache/archive first, independent device-side Google fallback. */
 (() => {
   'use strict';
-  const VERSION = '20261026-direct-google-1';
-  const STORY = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v1\/stories\/([A-Z0-9]{14})(?:\?[^#]*)?$/;
+  const VERSION = '20261031-v1-v2-1';
+  const STORY = /^https:\/\/cdn-mobapi\.bloomberg\.com\/wssmobile\/v(?:1|2)\/stories\/([A-Z0-9]{14})(?:\?[^#]*)?$/;
   const NUMBER = '_nickcxmParagraphId';
   const TRANSLATION = '_nickcxmTranslation';
   const INFO = '_nickcxmTranslationInfo';
@@ -10,53 +10,83 @@
   const INLINE = '_nickcxmInlineSourceIds';
   const MARKER = /[【\[［]\s*(?:[pPＰｐ]\s*)?([0-9０-９](?:[ \t]*[0-9０-９])*)\s*[】\]］]/g;
 
-  function textOf(parts, depth = 0) {
+  function schema(story) {
+    if (Array.isArray(story?.components)) return { version: 1, blocks: story.components, parts: 'parts', value: 'text' };
+    if (Array.isArray(story?.structuredData?.data)) return { version: 2, blocks: story.structuredData.data, parts: 'content', value: 'value' };
+    throw new Error('Unsupported article structure');
+  }
+
+  function isParagraph(component, version) {
+    return version === 2 ? component?.type === 'paragraph' : component?.role === 'p';
+  }
+
+  function textNode(text, version, metadata = {}) {
+    return version === 2 ? { type: 'text', value: text, ...metadata } : { role: 'text', text, ...metadata };
+  }
+
+  function paragraphNode(text, version, metadata = {}) {
+    return version === 2 ? { type: 'paragraph', data: {}, content: [textNode(text, version)], ...metadata } :
+      { role: 'p', parts: [textNode(text, version)], ...metadata };
+  }
+
+  function withBlocks(story, blocks, version) {
+    return version === 2 ? { ...story, structuredData: { ...story.structuredData, data: blocks } } : { ...story, components: blocks };
+  }
+
+  function textOf(parts, depth = 0, version = 1) {
     if (!Array.isArray(parts) || depth > 20) throw new Error('Unsupported paragraph');
+    const children = version === 2 ? 'content' : 'parts';
+    const value = version === 2 ? 'value' : 'text';
     return parts.map(part => {
       if (!part || typeof part !== 'object') throw new Error('Unsupported part');
-      if (Array.isArray(part.parts) && part.parts.length) return textOf(part.parts, depth + 1);
-      return typeof part.text === 'string' ? part.text : '';
+      if (Array.isArray(part[children]) && part[children].length) return textOf(part[children], depth + 1, version);
+      return typeof part[value] === 'string' ? part[value] : '';
     }).join('');
   }
 
-  function sourceParts(component) {
-    let parts = (component.parts || []).filter(part => !part[TRANSLATION]);
-    if (component[NUMBER] && parts[0]?.role === 'text' &&
-        /^(?:\d+\.\s*|【(?:p)?\d+】\s*)$/.test(parts[0].text || '')) parts = parts.slice(1);
+  function sourceParts(component, version = 1) {
+    const children = version === 2 ? 'content' : 'parts';
+    const value = version === 2 ? 'value' : 'text';
+    let parts = (component[children] || []).filter(part => !part[TRANSLATION]);
+    const firstIsText = version === 2 ? parts[0]?.type === 'text' : parts[0]?.role === 'text';
+    if (component[NUMBER] && firstIsText && /^(?:\d+\.\s*|【(?:p)?\d+】\s*)$/.test(parts[0][value] || '')) parts = parts.slice(1);
     return parts;
   }
 
   function prepare(story, requestUrl) {
-    if (!story || !Array.isArray(story.components) || story.components.length > 500 || typeof story.title !== 'string') throw new Error('Unsupported article');
+    const shape = schema(story);
+    if (shape.blocks.length > 500 || typeof story.title !== 'string') throw new Error('Unsupported article');
     const match = STORY.exec(requestUrl);
     if (!match) throw new Error('Unsupported URL');
     const paragraphs = [];
     let id = 0;
-    for (const component of story.components) {
-      if (component?.[INFO] || component?.[TRANSLATION] || component?.role !== 'p') continue;
+    for (const component of shape.blocks) {
+      if (component?.[INFO] || component?.[TRANSLATION] || !isParagraph(component, shape.version)) continue;
       id++;
-      const text = textOf(sourceParts(component)).trim();
+      const text = textOf(sourceParts(component, shape.version), 0, shape.version).trim();
       if (text) paragraphs.push({ id, text });
     }
     const title = story._nickcxmTitleTranslated ? story.title.split('\n')[0] : story.title;
     // Only a canonical public article URL or the exact known API path is sent.
-    const canonical = typeof story.longURL === 'string' && /^https:\/\/(?:www\.)?bloomberg\.com\//.test(story.longURL) ? story.longURL.split(/[?#]/)[0] : requestUrl.split('?')[0];
+    const link = shape.version === 2 ? story.longUrl : story.longURL;
+    const canonical = typeof link === 'string' && /^https:\/\/(?:www\.)?bloomberg\.com\//.test(link) ? link.split(/[?#]/)[0] : requestUrl.split('?')[0];
     return { article: { id: match[1], title, url: canonical,
       updatedAt: ['number', 'string'].includes(typeof story.updatedAt) ? String(story.updatedAt) : '',
-      publishedAt: ['number', 'string'].includes(typeof story.published) ? String(story.published) : '' }, paragraphs };
+      publishedAt: ['number', 'string'].includes(typeof (story.publishedAt ?? story.published)) ? String(story.publishedAt ?? story.published) : '' }, paragraphs };
   }
 
   function render(story, result, params) {
     if (!Array.isArray(result.translations) || result.translations.length > 1000 || !Array.isArray(result.warnings)) throw new Error('Invalid backend response');
+    const shape = schema(story);
     const components = [];
     const positions = new Map();
     let id = 0;
-    for (const original of story.components) {
+    for (const original of shape.blocks) {
       if (original?.[INFO] || original?.[TRANSLATION]) continue;
-      if (original?.role !== 'p') { components.push(original); continue; }
+      if (!isParagraph(original, shape.version)) { components.push(original); continue; }
       id++;
       const component = { ...original, [NUMBER]: id,
-        parts: [{ role: 'text', text: id + '. ' }, ...sourceParts(original)] };
+        [shape.parts]: [textNode(id + '. ', shape.version), ...sourceParts(original, shape.version)] };
       delete component[INLINE];
       positions.set(id, components.length); components.push(component);
     }
@@ -68,11 +98,11 @@
       const index = positions.get(Math.max(...bodyIds));
       // Exact paragraphs use decimal numbers; unresolved groups retain their range.
       const translation = piece.text.replace(MARKER, (_, number) => Number(number.replace(/\s/g, '').replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 65296))) + '. ');
-      components[index].parts.push({ role: 'text', text: '\n' + piece.ids.map(value => value + '.').join(' ') + ' ' + translation,
-        [TRANSLATION]: true, [SOURCES]: piece.ids });
+      components[index][shape.parts].push(textNode('\n' + piece.ids.map(value => value + '.').join(' ') + ' ' + translation, shape.version, {
+        [TRANSLATION]: true, [SOURCES]: piece.ids }));
       components[index][INLINE] = [...(components[index][INLINE] || []), ...bodyIds];
     }
-    const output = { ...story, components };
+    const output = withBlocks(story, components, shape.version);
     const englishTitle = story._nickcxmTitleTranslated ? story.title.split('\n')[0] : story.title;
     if (typeof result.titleTranslation === 'string' && result.titleTranslation.trim()) {
       output.title = englishTitle + '\n' + result.titleTranslation.trim(); output._nickcxmTitleTranslated = true;
@@ -83,11 +113,16 @@
     if (providers.includes('google')) notices.push('翻译服务：' + providers.map(value => value === 'google' && result.directFallback ? 'Google（设备直连备用）' : names[value] || value).join('、') + (result.cacheHit ? '（缓存）' : ''));
     if (result.warnings.length) notices.push('翻译提示：' + result.warnings.filter(value => typeof value === 'string').join(' '));
     if (result.complete === false) notices.push('部分内容未能翻译，已保留原文。');
-    const first = components.findIndex(value => value?.role === 'p');
-    if (notices.length && first !== -1) components.splice(first + 1, 0, { role: 'p', [INFO]: 'notice', parts: [{ role: 'text', text: notices.join('\n') }] });
+    const first = components.findIndex(value => isParagraph(value, shape.version));
+    if (notices.length && first !== -1) components.splice(first + 1, 0, paragraphNode(notices.join('\n'), shape.version, { [INFO]: 'notice' }));
     if (params.removeAdConfig) {
-      delete output.adParams;
-      if (typeof output.disableAds === 'boolean') output.disableAds = true;
+      if (shape.version === 2) {
+        delete output.adTargeting;
+        if (typeof output.adsDisabled === 'boolean') output.adsDisabled = true;
+      } else {
+        delete output.adParams;
+        if (typeof output.disableAds === 'boolean') output.disableAds = true;
+      }
     }
     return output;
   }
@@ -100,12 +135,12 @@
   }
 
   function failure(story, message) {
-    const first = story.components.findIndex(value => value?.role === 'p' && !value[TRANSLATION] && !value[INFO]);
-    if (first < 0) return story;
-    const components = story.components.filter(value => !value?.[INFO]);
-    const index = components.findIndex(value => value?.role === 'p' && !value[TRANSLATION]);
-    components.splice(index + 1, 0, { role: 'p', [INFO]: 'notice', parts: [{ role: 'text', text: message }] });
-    return { ...story, components };
+    const shape = schema(story);
+    const components = shape.blocks.filter(value => !value?.[INFO]);
+    const index = components.findIndex(value => isParagraph(value, shape.version) && !value[TRANSLATION]);
+    if (index < 0) return story;
+    components.splice(index + 1, 0, paragraphNode(message, shape.version, { [INFO]: 'notice' }));
+    return withBlocks(story, components, shape.version);
   }
 
   const TOTAL_BUDGET_MS = 55000;
@@ -296,10 +331,10 @@
       done = { body: JSON.stringify(render(story, result, { removeAdConfig: params.removeAdConfig !== false })), headers: headers($response.headers) };
       if (params.debug) console.log('[Bloomberg Backend] ' + JSON.stringify({ version: VERSION, cacheHit: result.cacheHit, providers: result.providers, paragraphs: payload.paragraphs.length }));
     } catch (error) {
-      if (Array.isArray(story?.components)) done = { body: JSON.stringify(failure(story, '翻译提示：' + (error.message || '后端翻译失败，已保留原文。'))), headers: headers($response.headers) };
+      if (Array.isArray(story?.components) || Array.isArray(story?.structuredData?.data)) done = { body: JSON.stringify(failure(story, '翻译提示：' + (error.message || '后端翻译失败，已保留原文。'))), headers: headers($response.headers) };
     }
     $done(done);
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { VERSION, STORY, prepare, render, textOf, sourceParts, headers, failure, backend, googleBatches, alignGoogle, directGoogle, validateResult, translateWithFallback, TOTAL_BUDGET_MS, HEALTH_TIMEOUT_MS, BACKEND_TIMEOUT_MS, run };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { VERSION, STORY, schema, prepare, render, textOf, sourceParts, headers, failure, backend, googleBatches, alignGoogle, directGoogle, validateResult, translateWithFallback, TOTAL_BUDGET_MS, HEALTH_TIMEOUT_MS, BACKEND_TIMEOUT_MS, run };
   if (typeof $done === 'function') run();
 })();

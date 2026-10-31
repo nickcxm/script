@@ -102,3 +102,43 @@ test('a failed fragment cannot be applied as a complete long paragraph',async()=
  const result=await execute({healthError:true,body:JSON.stringify({...fixture(),components:[p('A'.repeat(2400))]}),get(req,cb){requests++;if(requests===2)return cb('offline');const ids=[...new URL(req.url).searchParams.get('q').matchAll(/【(\d+)】/g)].map(x=>x[1]);cb(null,{status:200},JSON.stringify([[...ids.map(id=>['【'+id+'】译文。','original'])]]));}});
  const story=JSON.parse(result.value.body);assert.ok(!story.components[0].parts.some(x=>x._nickcxmTranslation));assert.match(result.value.body,/部分内容未能翻译/);
 });
+
+const v2Url=url.replace('/v1/','/v2/');
+const v2Fixture=()=>({id:'TMM9Y6T3BZM200',title:'Markets rally',longUrl:'https://www.bloomberg.com/news/articles/2026-10-25/test?tracking=secret',publishedAt:100,updatedAt:123,premium:true,metered:true,adTargeting:{private:'DO_NOT_SEND_ADS'},adsDisabled:false,footer:{unknown:'keep'},structuredData:{errors:[],formatVersion:2,data:[{type:'paragraph',data:{},content:[{type:'text',value:'First paragraph.'}]},{type:'media',subType:'chart',data:{chart:{type:'image',url:'SECRET_CHART_URL'},identifiers:{id:123}}},{type:'paragraph',data:{},content:[{type:'entity',subType:'person',value:'Stock',content:[{type:'text',value:'Stock'}],data:{person:{id:123},link:{href:'SECRET_PROFILE_URL'}}},{type:'text',value:' rose today.'}]}]}});
+
+test('both exact v1/v2 story URLs match, future versions and list endpoints do not',()=>{
+ const module=fs.readFileSync(path.join(__dirname,'../Bloomberg.Translate.sgmodule'),'utf8');
+ const line=module.split('\n').find(x=>x.startsWith('nickcxm.'));
+ const pattern=new RegExp(line.match(/pattern=(.*?), requires-body/)[1]);
+ for(const requestUrl of [url,v2Url,v2Url.split('?')[0]]){assert.ok(api.STORY.test(requestUrl));assert.ok(pattern.test(requestUrl));}
+ for(const invalid of [url.replace('/v1/','/v3/'),v2Url.replace('TMM9Y6T3BZM200','find'),v2Url.replace('TMM9Y6T3BZM200','TMM9Y6T3BZM200/related')]){assert.ok(!api.STORY.test(invalid));assert.ok(!pattern.test(invalid));}
+});
+test('v2 structured content matches v1 payload and metadata without leaking entity data',()=>{
+ const payload=api.prepare(v2Fixture(),v2Url);
+ assert.deepEqual(payload,api.prepare(fixture(),url));
+ assert.ok(!JSON.stringify(payload).includes('SECRET_'));assert.ok(!JSON.stringify(payload).includes('DO_NOT_SEND'));
+});
+test('v2 renderer appends value text, preserves charts/entity links and leaves access flags alone',()=>{
+ const original=v2Fixture(),snapshot=JSON.stringify(original);const result=api.render(original,response(),{removeAdConfig:true});
+ assert.equal(JSON.stringify(original),snapshot);assert.equal(result.components,undefined);assert.equal(result.title,'Markets rally\n市场上涨');
+ assert.equal(result.structuredData.data.length,3);assert.deepEqual(result.structuredData.data[1],original.structuredData.data[1]);assert.deepEqual(result.structuredData.data[2].content[1],original.structuredData.data[2].content[0]);
+ assert.equal(result.structuredData.data[0].content.at(-1).type,'text');assert.equal(result.structuredData.data[0].content.at(-1).value,'\n1. 第一段。');
+ assert.deepEqual(result.structuredData.errors,original.structuredData.errors);assert.equal(result.structuredData.formatVersion,2);assert.deepEqual(result.footer,original.footer);assert.equal(result.premium,true);assert.equal(result.metered,true);assert.equal(result.adTargeting,undefined);assert.equal(result.adsDisabled,true);
+});
+test('v2 rerendering does not duplicate numbers or translate an existing Chinese part',()=>{
+ const first=api.render(v2Fixture(),response(),{});assert.deepEqual(api.prepare(first,v2Url),api.prepare(v2Fixture(),v2Url));assert.deepEqual(api.render(first,response(),{}),first);
+});
+test('v2 backend execution returns a native structuredData response',async()=>{
+ const result=await execute({requestUrl:v2Url,body:JSON.stringify(v2Fixture())});const story=JSON.parse(result.value.body);
+ assert.equal(result.posts.length,1);assert.equal(JSON.parse(result.posts[0].body).article.id,'TMM9Y6T3BZM200');assert.equal(story.components,undefined);assert.equal(story.structuredData.data[0].content.at(-1).value,'\n1. 第一段。');assert.equal(story.structuredData.data[2].content.at(-1).value,'\n2. 股票今天上涨。');
+});
+test('v2 final Google fallback and failure notices use native paragraph/content/value nodes',async()=>{
+ const result=await execute({requestUrl:v2Url,body:JSON.stringify(v2Fixture()),healthError:true});const story=JSON.parse(result.value.body);
+ assert.equal(story.components,undefined);assert.match(story.structuredData.data[0].content.at(-1).value,/谷歌译文1/);
+ const notice=story.structuredData.data.find(x=>x._nickcxmTranslationInfo);assert.equal(notice.type,'paragraph');assert.deepEqual(notice.data,{});assert.match(notice.content[0].value,/Google（设备直连备用）/);
+ const failed=await execute({requestUrl:v2Url,body:JSON.stringify(v2Fixture()),healthError:true,googleError:true});assert.match(failed.value.body,/保留原文/);assert.equal(JSON.parse(failed.value.body).components,undefined);
+});
+test('v2 merged translations retain numbering at the last original paragraph',()=>{
+ const data=response();data.titleTranslation='';data.translations=[{ids:[0,1,2],text:'合并译文'}];
+ const result=api.render(v2Fixture(),data,{removeAdConfig:false});assert.equal(result.title,'Markets rally');assert.equal(result.structuredData.data[2].content.at(-1).value,'\n0. 1. 2. 合并译文');assert.deepEqual(result.adTargeting,v2Fixture().adTargeting);
+});

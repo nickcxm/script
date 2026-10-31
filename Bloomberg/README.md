@@ -10,12 +10,13 @@ Surge 负责提取文章并回填 JSON，翻译、缓存、去重、百度额度
 https://raw.githubusercontent.com/nickcxm/script/main/Bloomberg/Bloomberg.Translate.sgmodule
 ```
 
-模块版本：`20261026-direct-google-1`。JS 固定到已验证的提交；更新已有模块才能取得新脚本地址。
+模块版本：`20261031-v1-v2-1`。JS 固定到已验证的提交；更新已有模块才能取得新脚本地址。
 
 启用 MITM 并信任 Surge 证书。只匹配以下 GET 接口的 HTTP 200 JSON：
 
 ```text
 https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/<14位大写字母或数字的ID>
+https://cdn-mobapi.bloomberg.com/wssmobile/v2/stories/<14位大写字母或数字的ID>
 ```
 
 | 参数 | 默认 | 说明 |
@@ -32,8 +33,8 @@ https://cdn-mobapi.bloomberg.com/wssmobile/v1/stories/<14位大写字母或数�
 
 ## 展示
 
-- 每个正文段落先拼接其所有 `parts` 和嵌套链接文字。嵌套 parts 优先于 anchor 的同名 text，避免重复。
-- 原文保留链接与图片位置，英文与中文使用 `1.` 等编号。译文作为同一段落末尾的 `role:text` 片段追加，单个换行分隔，不为每段额外创建段落。
+- v1 使用 `components` 中 `role:p` 的 `parts/text`；v2 使用 `structuredData.data` 中 `type:paragraph` 的 `content/value`。每段先拼接所有正文及嵌套实体/链接文字，嵌套内容优先于重复的回退文字。两种版本都保留图片、图表、链接与未知字段，不把 v2 转换成 v1 JSON。
+- 原文保留链接与图片位置，英文与中文使用 `1.` 等编号。译文作为同一段落末尾的文本片段追加（v1 为 `role:text/text`，v2 为 `type:text/value`），单个换行分隔，不为每段额外创建段落。
 - 标题直接显示英文原标题与中文标题。
 - Apple 批量接口以 clientIdentifier 精确匹配段落。百度/Google 继续使用带编号的批次；编号异常时保留合并译文与对应范围，不猜测逐段关系。
 - 默认 Apple 或百度成功不显示 provider；使用 Google 时在第一段后显示一次服务说明，错误也集中在第一段后显示。
@@ -71,3 +72,5 @@ python3 -m unittest discover -s Bloomberg/usage-service/tests -v
 平均耗时按 provider 分别提供本月与累计值，仅计算有耗时记录的成功调用，并展示有效样本数；缓存命中和无耗时的历史记录不计入均值。每千字符耗时按成功样本总耗时 / 总字符数加权计算。新后端使用实际引擎调用耗时；仍使用旧脚本的新请求以预约到完成的时间估算，包含少量局域网记账往返。
 
 设备直连 Google 时，仅发送待译标题和正文，不附带 Bloomberg 登录凭证、来源 URL 或百度凭证。第一段明确标注“Google（设备直连备用）”与失败原因。该备用部分的用量、耗时和译文不会回传 mini，不会出现在中央统计/存档中；不在设备持久化待同步队列。后端超时后自身工作可能仍在完成，不能把设备直连译文误记成后端的结果。
+
+2026-10-31 HAR 确认 App 使用 v2 文章详情，且正文改为 structuredData.data。只扩展 URL 匹配无法兼容，因此模块同时适配读取、回填、提示和广告配置字段。v2 的 adTargeting / adsDisabled 对应 v1 的 adParams / disableAds；不修改 metered、premium 等访问控制字段。
